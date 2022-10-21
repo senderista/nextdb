@@ -11,9 +11,6 @@
 // Returns a pointer to a mapping of the "locators" shared memory segment.
 static inline gaia::db::locators_t* get_locators();
 
-// Returns a pointer to a mapping of the "locators" shared memory segment for the allocator.
-static inline gaia::db::locators_t* get_locators_for_allocator();
-
 // Returns a pointer to a mapping of the "counters" shared memory segment.
 static inline gaia::db::counters_t* get_counters();
 
@@ -28,9 +25,6 @@ static inline gaia::db::id_index_t* get_id_index();
 
 // Returns a pointer to a mapping of the "type_index" shared memory segment.
 static inline gaia::db::type_index_t* get_type_index();
-
-// Returns a pointer to the indexes.
-static inline gaia::db::index::indexes_t* get_indexes();
 
 // Gets the memory manager instance for the current thread or process.
 static inline gaia::db::memory_manager::memory_manager_t* get_memory_manager();

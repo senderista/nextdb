@@ -137,7 +137,7 @@ class Dependency:
                 help=argparse.SUPPRESS,
             )
 
-            base_image_default = 'ubuntu:20.04'
+            base_image_default = 'ubuntu:22.04'
             parser.add_argument(
                 '--base-image',
                 default=base_image_default,

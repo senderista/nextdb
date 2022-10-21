@@ -92,6 +92,11 @@ public:
     const T_output& operator*() const;
     const T_output* operator->() const;
 
+    // REVIEW: allow non-const versions of operators unless it causes bugs with
+    // generator implementations that don't expect mutation.
+    T_output& operator*();
+    T_output* operator->();
+
     // Advance to the next valid state.
     generator_iterator_t& operator++();
     generator_iterator_t operator++(int);

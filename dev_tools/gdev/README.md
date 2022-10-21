@@ -166,19 +166,11 @@ make install
 flatbuffers-compiler
 libexplain-dev
 libstdc++-10-dev
-openjdk-8-jdk
-python3-dev
 
 [gaia]
 production/cmake
-production/sql
-third_party/production/bison
 third_party/production/cmake
-third_party/production/flatcc
 third_party/production/googletest
-third_party/production/postgresql
-third_party/production/pybind11
-third_party/production/rocksdb
 
 [run]
 cmake -DCMAKE_MODULE_PATH={source_dir('production/cmake')} \

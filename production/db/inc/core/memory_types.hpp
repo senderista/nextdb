@@ -11,6 +11,8 @@
 #include <climits>
 #include <cstdint>
 
+#include "gaia/common.hpp"
+
 #include "gaia_internal/common/assert.hpp"
 
 namespace gaia

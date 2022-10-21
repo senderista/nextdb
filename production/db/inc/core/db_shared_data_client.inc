@@ -21,11 +21,6 @@ static gaia::db::locators_t* get_locators()
     return gaia::db::client_t::s_session_context->private_locators.data();
 }
 
-static gaia::db::locators_t* get_locators_for_allocator()
-{
-    return get_locators();
-}
-
 static gaia::db::counters_t* get_counters()
 {
     // Since we don't use this accessor in the client itself, we can assert that
@@ -84,11 +79,6 @@ static gaia::db::type_index_t* get_type_index()
         "Type index not mapped!");
 
     return gaia::db::client_t::s_session_context->shared_type_index.data();
-}
-
-static gaia::db::index::indexes_t* get_indexes()
-{
-    return &gaia::db::client_t::s_session_context->txn_context->local_indexes;
 }
 
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()

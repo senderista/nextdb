@@ -9,7 +9,6 @@
 #pragma once
 
 #include "gaia_internal/db/db_types.hpp"
-#include "gaia_internal/db/triggers.hpp"
 
 namespace gaia
 {
@@ -26,6 +25,9 @@ constexpr char c_db_server_exec_name[] = "gaia_db_server";
 
 // The name of the default gaia instance.
 constexpr char c_default_instance_name[] = "gaia_default_instance";
+
+// The default location of the data directory.
+constexpr char c_default_data_dir[] = "/var/lib/gaia/db";
 
 // The customer facing name of the DB server.
 constexpr char c_db_server_name[] = "Gaia Database Server";

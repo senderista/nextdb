@@ -11,7 +11,6 @@
 #include <cstring>
 
 #include "gaia_internal/common/assert.hpp"
-#include "gaia_internal/db/type_metadata.hpp"
 
 #include "db_helpers.hpp"
 #include "type_index.hpp"
@@ -40,48 +39,6 @@ gaia_ptr_t gaia_ptr_t::from_gaia_id(
     common::gaia_id_t id)
 {
     return gaia_ptr_t(id_to_locator(id));
-}
-
-gaia_ptr_t gaia_ptr_t::find_first(common::gaia_type_t type)
-{
-    gaia_ptr_t ptr;
-    ptr.m_locator = c_first_gaia_locator;
-
-    if (!ptr.is(type))
-    {
-        ptr = ptr.find_next(type);
-    }
-
-    return ptr;
-}
-
-gaia_ptr_t gaia_ptr_t::find_next() const
-{
-    if (m_locator.is_valid())
-    {
-        return find_next(to_ptr()->type);
-    }
-
-    return *this;
-}
-
-gaia_ptr_t gaia_ptr_t::find_next(gaia_type_t type) const
-{
-    gaia_ptr_t next_ptr = *this;
-
-    // Search for objects of this type within the range of used locators.
-    gaia_locator_t last_locator = get_last_locator();
-    while ((++next_ptr.m_locator).is_valid() && next_ptr.m_locator <= last_locator)
-    {
-        if (next_ptr.is(type))
-        {
-            return next_ptr;
-        }
-    }
-
-    // Mark end of search.
-    next_ptr.m_locator = c_invalid_gaia_locator;
-    return next_ptr;
 }
 
 std::shared_ptr<generator_t<gaia_locator_t>>

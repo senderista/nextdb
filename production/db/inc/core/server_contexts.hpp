@@ -33,13 +33,6 @@ struct server_transaction_context_t
 
     std::vector<std::pair<gaia_txn_id_t, log_offset_t>> txn_logs_for_snapshot;
 
-    // Local snapshot for server-side transactions.
-    mapped_data_t<locators_t> local_snapshot_locators;
-
-    // Watermark that tracks how many log records have been used for the current snapshot instance.
-    // This is used to permit the incremental updating of the snapshot.
-    size_t last_snapshot_processed_log_record_count{0};
-
 public:
     inline ~server_transaction_context_t();
 
@@ -53,7 +46,6 @@ struct server_session_context_t
 
     int session_socket{-1};
     messages::session_state_t session_state{messages::session_state_t::DISCONNECTED};
-    gaia::db::session_type_t session_type{gaia::db::session_type_t::regular};
     bool session_shutdown{false};
     int session_shutdown_eventfd{-1};
 

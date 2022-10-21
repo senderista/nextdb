@@ -22,7 +22,6 @@ enum session_event_t: uint8 {
     DECIDE_TXN_COMMIT,
     DECIDE_TXN_ABORT,
     REQUEST_STREAM,
-    DECIDE_TXN_ROLLBACK_FOR_ERROR,
 }
 
 union request_data_t {
@@ -45,13 +44,8 @@ table transaction_info_t {
     transaction_logs_to_apply: [transaction_log_info_t];
 }
 
-table transaction_error_t {
-    error_message: string;
-}
-
 union reply_data_t {
     transaction_info: transaction_info_t,
-    transaction_error: transaction_error_t,
 }
 
 table server_reply_t {

@@ -6,11 +6,11 @@
 // or at https://opensource.org/licenses/MIT.
 ////////////////////////////////////////////////////
 
+#include <format>
+
 #include "client_messenger.hpp"
 
 #include "gaia/common.hpp"
-
-#include <gaia_spdlog/fmt/fmt.h>
 
 using namespace gaia::common;
 using namespace gaia::db::messages;
@@ -74,7 +74,7 @@ void client_messenger_t::receive_server_reply(
     else if (m_count_received_fds != expected_count_received_fds)
     {
         ASSERT_UNREACHABLE(
-            gaia_fmt::format(
+            std::format(
                 "Expected {} fds, but received {} fds!",
                 expected_count_received_fds, m_count_received_fds)
                 .c_str());
@@ -87,7 +87,7 @@ void client_messenger_t::receive_server_reply(
         {
             ASSERT_INVARIANT(
                 current_fd != -1,
-                gaia_fmt::format("The fd received at index {} is invalid!", fd_index).c_str());
+                std::format("The fd received at index {} is invalid!", fd_index).c_str());
         }
     }
 }

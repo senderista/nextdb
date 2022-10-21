@@ -9,7 +9,6 @@
 #include "gaia/db/db.hpp"
 
 #include "gaia_internal/db/db.hpp"
-#include "gaia_internal/db/db_client_config.hpp"
 #include "gaia_internal/db/db_types.hpp"
 
 #include "db_client.hpp"
@@ -26,8 +25,7 @@ bool gaia::db::is_transaction_open()
 
 void gaia::db::begin_session()
 {
-    config::session_options_t session_options = config::get_default_session_options();
-    gaia::db::client_t::begin_session(session_options);
+    gaia::db::client_t::begin_session();
 }
 
 void gaia::db::end_session()

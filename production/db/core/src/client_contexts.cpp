@@ -8,8 +8,6 @@
 
 #include "client_contexts.hpp"
 
-#include "index.hpp"
-
 namespace gaia
 {
 namespace db
@@ -17,11 +15,6 @@ namespace db
 
 void client_transaction_context_t::clear()
 {
-    // Clear the local indexes.
-    for (const auto& index : local_indexes)
-    {
-        index.second->clear();
-    }
 }
 
 client_session_context_t::client_session_context_t()

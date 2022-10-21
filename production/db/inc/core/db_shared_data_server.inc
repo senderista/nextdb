@@ -11,16 +11,6 @@ static const bool c_is_running_on_client = false;
 
 static gaia::db::locators_t* get_locators()
 {
-    // The local snapshot segment should always be mapped whenever any callers
-    // of this method are able to observe it.
-    DEBUG_ASSERT_PRECONDITION(
-        gaia::db::server_t::s_session_context->txn_context->local_snapshot_locators.is_set(), "Invalid local snapshot!");
-
-    return gaia::db::server_t::s_session_context->txn_context->local_snapshot_locators.data();
-}
-
-static gaia::db::locators_t* get_locators_for_allocator()
-{
     // The shared locator segment should always be mapped whenever any callers
     // of this method are able to observe it.
     DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_locators.is_set(), "Invalid local snapshot!");
@@ -70,11 +60,6 @@ static gaia::db::type_index_t* get_type_index()
     // its null state, i.e., with the type_index segment unmapped).
     DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_type_index.is_set(), "Server type_index segment is unmapped!");
     return gaia::db::server_t::s_shared_type_index.data();
-}
-
-static gaia::db::index::indexes_t* get_indexes()
-{
-    return &gaia::db::server_t::s_global_indexes;
 }
 
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()

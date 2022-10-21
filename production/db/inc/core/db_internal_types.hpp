@@ -112,13 +112,6 @@ constexpr size_t c_max_types = 64;
 // which gives excellent locality as long as IDs are sequentially allocated. If
 // IDs are randomized, then locality will be poor and we may want to consider a
 // more compact structure (e.g., a randomized binary search tree).
-//
-// If hash map lookups during reference traversals are a bottleneck, we could
-// store locators rather than gaia_ids in each object's references array (we
-// would need to either swizzle them to gaia_ids during persistence and
-// unswizzle gaia_ids to locators during recovery, or persist the
-// gaia_id->locator mapping separately). Other expensive hash map lookups could
-// be similarly optimized by substituting locators for gaia_ids.
 constexpr size_t c_hash_buckets{1UL << 26};
 // For efficient modulo reduction, the hash bucket count should be a power of 2.
 static_assert((c_hash_buckets & (c_hash_buckets - 1)) == 0, "Hash bucket count must be a power of 2!");

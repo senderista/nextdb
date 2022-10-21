@@ -5,7 +5,7 @@
 
 project(flatbuffers)
 
-set(FLATBUFFERS_VERSION "2.0.0")
+set(FLATBUFFERS_VERSION "2.0.8")
 
 add_library(flatbuffers INTERFACE)
 add_dependencies(flatbuffers flatbuffers_dependency)
@@ -46,7 +46,7 @@ ExternalProject_Add(flatbuffers_dependency
   URL
     https://github.com/google/flatbuffers/archive/refs/tags/v${FLATBUFFERS_VERSION}.tar.gz
   URL_HASH
-    SHA256=9ddb9031798f4f8754d00fca2f1a68ecf9d0f83dfac7239af1311e4fd9a565c4
+    SHA256=f97965a727d26386afaefff950badef2db3ab6af9afe23ed6d94bfb65f95f37e
   EXCLUDE_FROM_ALL
     TRUE
   SOURCE_DIR

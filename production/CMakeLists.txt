@@ -9,7 +9,7 @@
 cmake_minimum_required(VERSION 3.17)
 
 # Specify the C++ standard.
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -107,6 +107,15 @@ target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSER
 # Disabling asserts will produce bogus unused variable warnings.
 target_compile_options(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>:-Wno-unused-parameter -Wno-unused-lambda-capture -Wno-unused-variable -Wno-unused-but-set-variable>)
 
+# Always use libc++ for better C++20 and sanitizer support.
+# (For eventual MemorySanitizer support, we need all targets in debug builds to
+# use libc++, including third-party packages.)
+add_compile_options(-stdlib=libc++)
+add_link_options(-stdlib=libc++)
+# Use incomplete C++20 features in libc++ (for std::format and maybe std::ranges).
+add_compile_options(-fexperimental-library)
+add_link_options(-lc++experimental)
+
 # Debug build-specific options.
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
   # Don't omit debug symbols from any built binaries.
@@ -117,11 +126,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInf
 
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(gaia_build_options INTERFACE -O0)
-
-    # For eventual MemorySanitizer support, we need all targets in debug builds
-    # to use libc++, including third-party packages.
-    add_compile_options(-stdlib=libc++)
-    add_link_options(-stdlib=libc++)
 
     # Enable ASan by default in debug builds.
     set(SANITIZER "ASAN" CACHE STRING "Enable sanitizers in debug builds")
@@ -270,9 +274,6 @@ add_subdirectory(db)
 # Tools.
 add_subdirectory(tools)
 
-# Handle Gaia versioning.
-include(cmake/gaia_version.cmake)
-
 # We want to disable all clang-tidy checks for generated code.
 # However, if no checks are specified, clang-tidy will assume we
 # did not configure it correctly. Just add one check that will never be triggered.
@@ -292,3 +293,8 @@ add_custom_target(gaia_dependency_graph
   COMMAND rm -f ${CMAKE_CURRENT_BINARY_DIR}/gaia_dependencies/*
   COMMAND "${CMAKE_COMMAND}" "--graphviz=gaia_dependencies/gaia" .
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+# Customize test commands.
+file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/CTestCustom.cmake"
+CONTENT "set(CTEST_CUSTOM_PRE_TEST \"daemonize $<TARGET_FILE:gaia_db_server> --disable-persistence\")\nset(CTEST_CUSTOM_POST_TEST \"pkill -f -KILL gaia_db_server\")\n"
+)

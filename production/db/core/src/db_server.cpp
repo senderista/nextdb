@@ -13,6 +13,7 @@
 #include <csignal>
 
 #include <atomic>
+#include <format>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -35,8 +36,6 @@
 
 #include "db_helpers.hpp"
 #include "memory_helpers.hpp"
-#include "system_checks.hpp"
-#include "type_id_mapping.hpp"
 
 using namespace flatbuffers;
 using namespace gaia::db;
@@ -53,7 +52,6 @@ using persistence_mode_t = server_config_t::persistence_mode_t;
 static constexpr char c_message_unexpected_event_received[] = "Unexpected event received!";
 static constexpr char c_message_current_event_is_inconsistent_with_state_transition[]
     = "Current event is inconsistent with state transition!";
-static constexpr char c_message_unexpected_request_data_type[] = "Unexpected request data type!";
 static constexpr char c_message_thread_must_be_joinable[] = "Thread must be joinable!";
 static constexpr char c_message_epoll_create1_failed[] = "epoll_create1() failed!";
 static constexpr char c_message_epoll_wait_failed[] = "epoll_wait() failed!";
@@ -68,27 +66,7 @@ static constexpr char c_message_validating_txn_should_have_been_validated_before
     = "A possibly conflicting txn can only have its log invalidated if the committing transaction was concurrently validated!";
 static constexpr char c_message_preceding_txn_should_have_been_validated[]
     = "A transaction with commit timestamp preceding this transaction's begin timestamp is undecided!";
-static constexpr char c_message_unexpected_query_type[] = "Unexpected query type!";
-
-void server_t::handle_connect_ping(
-    session_event_t event, const void*, session_state_t old_state, session_state_t new_state)
-{
-    ASSERT_PRECONDITION(event == session_event_t::CONNECT_PING, c_message_unexpected_event_received);
-
-    s_session_context->session_type = session_type_t::ping;
-
-    handle_connect(session_event_t::CONNECT, nullptr, old_state, new_state);
-}
-
-void server_t::handle_connect_ddl(
-    session_event_t event, const void*, session_state_t old_state, session_state_t new_state)
-{
-    ASSERT_PRECONDITION(event == session_event_t::CONNECT_DDL, c_message_unexpected_event_received);
-
-    s_session_context->session_type = session_type_t::ddl;
-
-    handle_connect(session_event_t::CONNECT, nullptr, old_state, new_state);
-}
+static constexpr char c_message_unexpected_stream_type[] = "Unexpected stream type!";
 
 void server_t::handle_connect(
     session_event_t event, const void*, session_state_t old_state, session_state_t new_state)
@@ -99,17 +77,6 @@ void server_t::handle_connect(
     ASSERT_PRECONDITION(
         old_state == session_state_t::DISCONNECTED && new_state == session_state_t::CONNECTED,
         c_message_current_event_is_inconsistent_with_state_transition);
-
-    // Prevent starting a DDL session in parallel with an existing one
-    // or after a regular session has already been started.
-    if (s_session_context->session_type == session_type_t::ddl)
-    {
-        s_start_session_mutex.lock();
-    }
-    else if (s_session_context->session_type == session_type_t::regular)
-    {
-        s_start_session_mutex.lock_shared();
-    }
 
     // We need to reply to the client with the fds for the data/locator segments.
     FlatBufferBuilder builder;
@@ -321,21 +288,8 @@ void server_t::handle_commit_txn(
 
     // Actually commit the transaction.
     session_event_t decision = session_event_t::NOP;
-    try
-    {
-        bool success = txn_commit();
-        decision = success ? session_event_t::DECIDE_TXN_COMMIT : session_event_t::DECIDE_TXN_ABORT;
-    }
-    catch (const pre_commit_validation_failure& e)
-    {
-        // Rollback our transaction in case of pre-commit errors.
-        txn_rollback();
-
-        // Save the error message so we can transmit it to the client.
-        s_session_context->error_message = e.what();
-
-        decision = session_event_t::DECIDE_TXN_ROLLBACK_FOR_ERROR;
-    }
+    bool success = txn_commit();
+    decision = success ? session_event_t::DECIDE_TXN_COMMIT : session_event_t::DECIDE_TXN_ABORT;
 
     // REVIEW: This is the only reentrant transition handler, and the only server-side state transition.
     apply_transition(decision, nullptr);
@@ -345,9 +299,8 @@ void server_t::handle_decide_txn(
     session_event_t event, const void*, session_state_t old_state, session_state_t new_state)
 {
     ASSERT_PRECONDITION(
-        event == session_event_t::DECIDE_TXN_COMMIT
-            || event == session_event_t::DECIDE_TXN_ABORT
-            || event == session_event_t::DECIDE_TXN_ROLLBACK_FOR_ERROR,
+        (event == session_event_t::DECIDE_TXN_COMMIT
+            || event == session_event_t::DECIDE_TXN_ABORT),
         c_message_unexpected_event_received);
 
     ASSERT_PRECONDITION(
@@ -357,19 +310,9 @@ void server_t::handle_decide_txn(
     auto cleanup = make_scope_guard([&] { release_transaction_resources(); });
 
     FlatBufferBuilder builder;
-    if (event == session_event_t::DECIDE_TXN_ROLLBACK_FOR_ERROR)
-    {
-        build_server_reply_error(builder, event, old_state, new_state, s_session_context->error_message.c_str());
-
-        // Clear error information.
-        s_session_context->error_message.clear();
-    }
-    else
-    {
-        build_server_reply_info(
-            builder, event, old_state, new_state,
-            txn_id(), txn_log_offset());
-    }
+    build_server_reply_info(
+        builder, event, old_state, new_state,
+        txn_id(), txn_log_offset());
     send_msg_with_fds(session_socket(), nullptr, 0, builder.GetBufferPointer(), builder.GetSize());
 }
 
@@ -392,16 +335,6 @@ void server_t::handle_client_shutdown(
     // we closed our write end, then we would be calling shutdown(SHUT_WR) twice, which
     // is another reason to just close the socket.)
     s_session_context->session_shutdown = true;
-
-    // Mark the end of an active DDL session.
-    if (s_session_context->session_type == session_type_t::ddl)
-    {
-        s_start_session_mutex.unlock();
-    }
-    else if (s_session_context->session_type == session_type_t::regular)
-    {
-        s_start_session_mutex.unlock_shared();
-    }
 
     // If the session had an active txn, clean up all its resources.
     if (s_session_context->txn_context && txn_id().is_valid())
@@ -483,14 +416,9 @@ void server_t::handle_request_stream(
 
     switch (request->data_type())
     {
+        // TODO: stream type-specific code goes here
         default:
-            ASSERT_UNREACHABLE(c_message_unexpected_query_type);
-        }
-
-        break;
-    }
-    default:
-        ASSERT_UNREACHABLE(c_message_unexpected_request_data_type);
+            ASSERT_UNREACHABLE(c_message_unexpected_stream_type);
     }
 
     // Transfer ownership of the server socket to the stream producer thread.
@@ -571,22 +499,6 @@ void server_t::build_server_reply_info(
     builder.Finish(message);
 }
 
-void server_t::build_server_reply_error(
-    FlatBufferBuilder& builder,
-    session_event_t event,
-    session_state_t old_state,
-    session_state_t new_state,
-    const char* error_message)
-{
-    builder.ForceDefaults(true);
-    const auto transaction_error = Createtransaction_error_tDirect(builder, error_message);
-    const auto server_reply = Createserver_reply_t(
-        builder, event, old_state, new_state,
-        reply_data_t::transaction_error, transaction_error.Union());
-    const auto message = Createmessage_t(builder, any_message_t::reply, server_reply.Union());
-    builder.Finish(message);
-}
-
 void server_t::clear_server_state()
 {
     data_mapping_t::close(c_data_mappings);
@@ -605,10 +517,10 @@ void server_t::init_shared_memory()
     // Initialize watermarks.
     for (auto& elem : s_watermarks)
     {
-        std::atomic_init(&elem, c_invalid_gaia_txn_id.value());
+        elem = {};
     }
 
-    // We may be reinitializing the server upon receiving a SIGHUP.
+    // Just in case this is invoked from a reinitialization path.
     clear_server_state();
 
     // Clear server state if an exception is thrown.
@@ -654,12 +566,6 @@ void server_t::init_shared_memory()
     std::fill(std::begin(s_allocated_log_offsets_bitmap), std::end(s_allocated_log_offsets_bitmap), 0);
     // Mark the invalid offset as allocated.
     safe_set_bit_value(s_allocated_log_offsets_bitmap.data(), s_allocated_log_offsets_bitmap.size(), c_invalid_log_offset, true);
-
-    // Populate shared memory from the persistent log and snapshot.
-    recover_db();
-
-    // Initialize indexes.
-    init_indexes();
 
     cleanup_memory.dismiss();
 }
@@ -722,152 +628,15 @@ void server_t::deallocate_object(gaia_offset_t offset)
     chunk_manager.deallocate(offset);
 }
 
-void server_t::recover_db()
-{
-    // If persistence is disabled, then this is a no-op.
-    if (s_server_conf.persistence_mode() != persistence_mode_t::e_disabled)
-    {
-        // We could get here after a server reset with '--persistence disabled-after-recovery',
-        // in which case we need to recover from the original persistent image.
-        if (!s_persistent_store)
-        {
-            auto cleanup = make_scope_guard([] { end_startup_txn(); });
-            begin_startup_txn();
-
-            s_persistent_store = std::make_unique<gaia::db::persistent_store_manager>(
-                get_counters(), s_server_conf.data_dir());
-            if (s_server_conf.persistence_mode() == persistence_mode_t::e_reinitialized_on_startup)
-            {
-                s_persistent_store->destroy_persistent_store();
-            }
-            s_persistent_store->open();
-            s_persistent_store->recover();
-        }
-    }
-
-    // If persistence is disabled after recovery, then destroy the RocksDB
-    // instance.
-    if (s_server_conf.persistence_mode() == persistence_mode_t::e_disabled_after_recovery)
-    {
-        s_persistent_store.reset();
-    }
-}
-
-gaia_txn_id_t server_t::begin_startup_txn()
-{
-    // Reserve an index in the safe_ts array, so the main thread can execute
-    // post-commit maintenance tasks after the recovery txn commits.
-    bool reservation_succeeded = reserve_safe_ts_index();
-    // The reservation must have succeeded because we are the first thread to
-    // reserve an index.
-    ASSERT_POSTCONDITION(reservation_succeeded, "The main thread cannot fail to reserve a safe_ts index!");
-
-    // Allocate begin timestamp and txn log offset.
-    txn_begin();
-    ASSERT_POSTCONDITION(txn_id().is_valid(), "Transaction begin timestamp should be valid!");
-    ASSERT_POSTCONDITION(txn_log_offset().is_valid(), "Transaction log offset should be valid!");
-
-    // Create snapshot for db recovery and index population.
-    bool apply_logs = false;
-    create_or_refresh_local_snapshot(apply_logs);
-
-    return txn_id();
-}
-
-void server_t::end_startup_txn()
-{
-    // The main thread no longer needs to perform any operations requiring a
-    // safe_ts index.
-    auto cleanup_safe_ts_index = make_scope_guard([&] { release_safe_ts_index(); });
-
-    // Register this txn under a new commit timestamp.
-    gaia_txn_id_t commit_ts = txn_metadata_t::register_commit_ts(
-        txn_id(), txn_log_offset());
-    // Mark this txn as submitted.
-    txn_metadata_t::set_active_txn_submitted(txn_id(), commit_ts);
-    // Mark this txn as committed.
-    txn_metadata_t::update_txn_decision(commit_ts, true);
-    // Mark this txn durable if persistence is enabled.
-    if (s_persistent_store)
-    {
-        txn_metadata_t::set_txn_durable(commit_ts);
-    }
-
-    // Force GC of txn log and clear transactional state.
-    release_transaction_resources();
-
-    ASSERT_POSTCONDITION(
-        txn_metadata_t::is_txn_gc_complete(commit_ts),
-        "Transaction log should be garbage-collected!");
-}
-
-// Create a thread-local snapshot from the shared locators.
-void server_t::create_or_refresh_local_snapshot(bool apply_logs)
-{
-    ASSERT_PRECONDITION(apply_logs || !local_snapshot_locators().is_set(), "Local snapshot is already mapped!");
-
-    bool was_snapshot_already_created = local_snapshot_locators().is_set();
-
-    if (!was_snapshot_already_created)
-    {
-        ASSERT_PRECONDITION(
-            last_snapshot_processed_log_record_count() == 0,
-            "'last_snapshot_processed_log_record_count' is set without the local snapshot being created!");
-
-        // Open a private locator mapping for the current thread.
-        bool manage_fd = false;
-        bool is_shared = false;
-        local_snapshot_locators().open(s_shared_locators.fd(), manage_fd, is_shared);
-    }
-
-    if (apply_logs)
-    {
-        // We only need to apply the logs for other transactions when we first create the snapshot.
-        if (!was_snapshot_already_created)
-        {
-            ASSERT_PRECONDITION(
-                txn_id().is_valid() && txn_metadata_t::is_txn_active(txn_id()),
-                "To apply logs, create_or_refresh_local_snapshot() must be called from within an active transaction!");
-
-            // Apply txn_logs for the snapshot.
-            for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
-            {
-                apply_log_from_offset(local_snapshot_locators().data(), log_offset);
-            }
-        }
-
-        // BUG (yiwen): This is incorrect: it races with client writes to the
-        // same shared memory segment, and client writes are not atomic (txn log
-        // records are 16 bytes and don't use a 128-bit integer type), so
-        // applied log records may be inconsistent!
-
-        // Apply current txn log to the local snapshot starting from the last processed log record count.
-        apply_log_from_offset(
-            local_snapshot_locators().data(),
-            txn_log_offset(),
-            last_snapshot_processed_log_record_count());
-
-        // Update our log record count watermark.
-        txn_log_t* txn_log = get_txn_log_from_offset(txn_log_offset());
-        s_session_context->txn_context->last_snapshot_processed_log_record_count = txn_log->record_count;
-    }
-}
-
-sigset_t server_t::mask_signals()
+sigset_t server_t::get_masked_signals()
 {
     sigset_t sigset;
     ::sigemptyset(&sigset);
 
-    // We now special-case SIGHUP to disconnect all sessions and reinitialize all shared memory.
     ::sigaddset(&sigset, SIGHUP);
     ::sigaddset(&sigset, SIGINT);
     ::sigaddset(&sigset, SIGTERM);
     ::sigaddset(&sigset, SIGQUIT);
-
-    // Per POSIX, we must use pthread_sigmask() rather than sigprocmask()
-    // in a multithreaded program.
-    // REVIEW: should this be SIG_SETMASK?
-    ::pthread_sigmask(SIG_BLOCK, &sigset, nullptr);
 
     return sigset;
 }
@@ -907,7 +676,7 @@ void server_t::init_listening_socket(const std::string& socket_name)
     // in the server address structure after the prefix null byte.
     ASSERT_INVARIANT(
         socket_name.size() <= sizeof(server_addr.sun_path) - 1,
-        gaia_fmt::format("Socket name '{}' is too long!", socket_name).c_str());
+        std::format("Socket name '{}' is too long!", socket_name).c_str());
 
     // We prepend a null byte to the socket name so the address is in the
     // (Linux-exclusive) "abstract namespace", i.e., not bound to the
@@ -953,12 +722,8 @@ bool server_t::authenticate_client_socket(int socket)
         throw_system_error("getsockopt(SO_PEERCRED) failed!");
     }
 
-    // REVIEW: Disable client authentication until we figure out
-    // how to let Postgres authenticate as a different user.
     // Client must have same effective user ID as server.
-    // return (cred.uid == ::geteuid());
-
-    return true;
+    return (cred.uid == ::geteuid());
 }
 
 bool server_t::can_start_session(int socket_fd)
@@ -2278,10 +2043,7 @@ void server_t::gc_applied_txn_logs()
             // If persistence is enabled, then we also need to check that
             // TXN_PERSISTENCE_COMPLETE is set (to avoid having redo versions
             // deallocated while they're being persisted).
-            bool is_persistence_enabled = (s_server_conf.persistence_mode() != persistence_mode_t::e_disabled)
-                && (s_server_conf.persistence_mode() != persistence_mode_t::e_disabled_after_recovery);
-
-            if (is_persistence_enabled && !txn_metadata_t::is_txn_durable(ts))
+            if (s_server_conf.is_persistence_enabled() && !txn_metadata_t::is_txn_durable(ts))
             {
                 break;
             }
@@ -2567,45 +2329,26 @@ bool server_t::txn_commit()
     gaia_txn_id_t commit_ts = submit_txn(
         txn_id(), txn_log_offset());
 
-    // This is only used for persistence.
-    std::string txn_name;
-
-    if (s_persistent_store)
-    {
-        txn_name = s_persistent_store->begin_txn(txn_id());
-        // Prepare log for transaction.
-        // This is effectively asynchronous with validation, because if it takes
-        // too long, then another thread may recursively validate this txn,
-        // before the committing thread has a chance to do so.
-        s_persistent_store->prepare_wal_for_write(get_txn_log(), txn_name);
-    }
-
     // Validate the txn against all other committed txns in the conflict window.
     bool is_committed = validate_txn(commit_ts);
 
     // Update the txn metadata with our commit decision.
     txn_metadata_t::update_txn_decision(commit_ts, is_committed);
 
-    // Persist the commit decision.
+    // TODO: Persist the commit decision.
+    // For now, just set the durable flag unconditionally after validation.
     // REVIEW: We can return a decision to the client asynchronously with the
     // decision being persisted (because the decision can be reconstructed from
     // the durable log itself, without the decision record).
-    if (s_persistent_store)
+    if (s_server_conf.is_persistence_enabled())
     {
-        // Mark txn as durable in metadata so we can GC the txn log.
-        // We only mark it durable after validation to simplify the
-        // state transitions:
+        // Mark txn as durable in metadata so we can GC the txn log. We only
+        // mark it durable after validation to simplify the state transitions:
         // TXN_VALIDATING -> TXN_DECIDED -> TXN_DURABLE.
-        txn_metadata_t::set_txn_durable(commit_ts);
 
-        if (is_committed)
-        {
-            s_persistent_store->append_wal_commit_marker(txn_name);
-        }
-        else
-        {
-            s_persistent_store->append_wal_rollback_marker(txn_name);
-        }
+        // TEST: We could inject a random sleep here to simulate persistence
+        // latency and test our GC logic.
+        txn_metadata_t::set_txn_durable(commit_ts);
     }
 
     return is_committed;
@@ -3074,194 +2817,62 @@ void server_t::deallocate_log_offset(log_offset_t offset)
         static_cast<size_t>(offset), false);
 }
 
-static bool is_system_compatible()
-{
-    std::cerr << std::endl;
-
-    if (!is_little_endian())
-    {
-        std::cerr << "The Gaia Database Server does not support big-endian CPU architectures." << std::endl;
-        return false;
-    }
-
-    if (!has_expected_page_size())
-    {
-        std::cerr << "The Gaia Database Server requires page size to be 4KB." << std::endl;
-        return false;
-    }
-
-    uint64_t policy_id = check_overcommit_policy();
-    const char* policy_desc = c_vm_overcommit_policies[policy_id].desc;
-    if (policy_id != c_always_overcommit_policy_id)
-    {
-        std::cerr
-            << "The current overcommit policy has a value of "
-            << policy_id << " (" << policy_desc << ")."
-            << std::endl;
-    }
-
-    if (policy_id == c_heuristic_overcommit_policy_id)
-    {
-        std::cerr
-            << "The Gaia Database Server will run normally under this overcommit policy,"
-            << " but may become unstable under rare conditions."
-            << std::endl;
-    }
-
-    if (policy_id == c_never_overcommit_policy_id)
-    {
-        std::cerr
-            << "The Gaia Database Server will not run under this overcommit policy."
-            << std::endl;
-    }
-
-    if (policy_id != c_always_overcommit_policy_id)
-    {
-        std::cerr
-            << std::endl
-            << "To ensure stable performance under all conditions, we recommend"
-            << " changing the overcommit policy to "
-            << c_always_overcommit_policy_id << " ("
-            << c_vm_overcommit_policies[c_always_overcommit_policy_id].desc << ")."
-            << std::endl;
-
-        std::cerr << R"(
-To temporarily enable this policy, open a shell with root privileges and type the following command:
-
-  echo 1 > /proc/sys/vm/overcommit_memory
-
-To permanently enable this policy, open /etc/sysctl.conf in an editor with root privileges and add the line:
-
-  vm.overcommit_memory=1
-
-Save the file, and in a shell with root privileges type:
-
-  sysctl -p
-        )" << std::endl;
-    }
-
-    if (policy_id == c_never_overcommit_policy_id)
-    {
-        return false;
-    }
-
-    if (!check_vma_limit())
-    {
-        std::cerr << R"(
-The Gaia Database Server requires a per-process virtual memory area limit of at least 65530.
-
-To temporarily set the minimum virtual memory area limit, open a shell with root privileges and type the following command:
-
-  echo 65530 > /proc/sys/vm/max_map_count
-
-To permanently set the minimum virtual memory area limit, open /etc/sysctl.conf in an editor with root privileges and add the line:
-
-  vm.max_map_count=65530
-
-Save the file, and in a shell with root privileges type:
-
-  sysctl -p
-        )" << std::endl;
-        return false;
-    }
-
-    if (!check_and_adjust_vm_limit())
-    {
-        std::cerr << R"(
-The Gaia Database Server requires that the maximum possible virtual memory address space is available.
-
-To temporarily enable the maximum virtual memory address space, open a shell with root privileges and type the following command:
-
-  ulimit -v unlimited
-
-To permanently enable the maximum virtual memory address space, open /etc/security/limits.conf in an editor with root privileges and add the following lines:
-
-  * soft as unlimited
-  * hard as unlimited
-
-Note: For enhanced security, replace the wildcard '*' in these file entries with the user name of the account that is running the Gaia Database Server.
-
-Save the file and start a new terminal session.
-        )" << std::endl;
-        return false;
-    }
-
-    return true;
-}
-
 // This method must be run on the main thread
 // (https://thomastrapp.com/blog/signal-handler-for-multithreaded-c++/).
 void server_t::run(server_config_t server_conf)
 {
-    // First validate our system assumptions.
-    if (!is_system_compatible())
-    {
-        std::cerr << "The Gaia Database Server is exiting due to an unsupported system configuration." << std::endl;
-        std::exit(1);
-    }
-
     // There can only be one thread running at this point, so this doesn't need synchronization.
     s_server_conf = server_conf;
 
-    while (true)
-    {
-        // Create eventfd shutdown event.
-        s_server_shutdown_eventfd = make_eventfd();
-        auto cleanup_shutdown_eventfd = make_scope_guard([] {
-            // We can't close this fd until all readers and writers have exited.
-            // The only readers are the client dispatch thread and the session
-            // threads, and the only writer is the signal handler thread. All
-            // these threads must have exited before we exit this scope and this
-            // handler executes.
-            close_fd(s_server_shutdown_eventfd);
-        });
+    // Create eventfd shutdown event.
+    s_server_shutdown_eventfd = make_eventfd();
+    auto cleanup_shutdown_eventfd = make_scope_guard([] {
+        // We can't close this fd until all readers and writers have exited.
+        // The only readers are the client dispatch thread and the session
+        // threads, and the only writer is the signal handler thread. All
+        // these threads must have exited before we exit this scope and this
+        // handler executes.
+        close_fd(s_server_shutdown_eventfd);
+    });
 
-        // Block handled signals in this thread and subsequently spawned threads.
-        sigset_t handled_signals = mask_signals();
+    // Block handled signals in this thread and subsequently spawned threads, so
+    // they can be handled by the dedicated signal handler thread.
+    sigset_t handled_signals = get_masked_signals();
 
-        // Launch signal handler thread.
-        int caught_signal = 0;
-        std::thread signal_handler_thread(signal_handler, handled_signals, std::ref(caught_signal));
+    // Per POSIX, we must use pthread_sigmask() rather than sigprocmask()
+    // in a multithreaded program.
+    // REVIEW: should this be SIG_SETMASK?
+    ::pthread_sigmask(SIG_BLOCK, &handled_signals, nullptr);
 
-        init_shared_memory();
+    // Launch signal handler thread.
+    int caught_signal = 0;
+    std::thread signal_handler_thread(signal_handler, handled_signals, std::ref(caught_signal));
 
-        // Launch thread to listen for client connections and create session threads.
-        std::thread client_dispatch_thread(client_dispatch_handler, server_conf.instance_name());
+    // Initialize all shared memory structures.
+    init_shared_memory();
 
-        // The client dispatch thread will only return after all sessions have been disconnected
-        // and the listening socket has been closed.
-        client_dispatch_thread.join();
+    // Launch thread to listen for client connections and create session threads.
+    std::thread client_dispatch_thread(client_dispatch_handler, server_conf.instance_name());
 
-        // The signal handler thread will only return after a blocked signal is pending.
-        signal_handler_thread.join();
+    // The client dispatch thread will only return after all sessions have been disconnected
+    // and the listening socket has been closed.
+    client_dispatch_thread.join();
 
-        // We shouldn't get here unless the signal handler thread has caught a signal.
-        ASSERT_INVARIANT(caught_signal != 0, "A signal should have been caught!");
+    // The signal handler thread will only return after a blocked signal is pending.
+    signal_handler_thread.join();
 
-        // We special-case SIGHUP to force reinitialization of the server.
-        // This is only enabled if persistence is disabled, because otherwise
-        // data would disappear on reset, only to reappear when the database is
-        // restarted and recovers from the persistent store.
-        if (!(caught_signal == SIGHUP
-              && (server_conf.persistence_mode() == persistence_mode_t::e_disabled
-                  || server_conf.persistence_mode() == persistence_mode_t::e_disabled_after_recovery)))
-        {
-            if (caught_signal == SIGHUP)
-            {
-                std::cerr << "Unable to reset the server because persistence is enabled, exiting." << std::endl;
-            }
+    // We shouldn't get here unless the signal handler thread has caught a signal.
+    ASSERT_INVARIANT(caught_signal != 0, "A signal should have been caught!");
 
-            // To exit with the correct status (reflecting a caught signal),
-            // we need to unblock blocked signals and re-raise the signal.
-            // We may have already received other pending signals by the time
-            // we unblock signals, in which case they will be delivered and
-            // terminate the process before we can re-raise the caught signal.
-            // That is benign, because we've already performed cleanup actions
-            // and the exit status will still be valid.
-            ::pthread_sigmask(SIG_UNBLOCK, &handled_signals, nullptr);
-            ::raise(caught_signal);
-        }
-    }
+    // To exit with the correct status (reflecting a caught signal),
+    // we need to unblock blocked signals and re-raise the signal.
+    // We may have already received other pending signals by the time
+    // we unblock signals, in which case they will be delivered and
+    // terminate the process before we can re-raise the caught signal.
+    // That is benign, because we've already performed cleanup actions
+    // and the exit status will still be valid.
+    ::pthread_sigmask(SIG_UNBLOCK, &handled_signals, nullptr);
+    ::raise(caught_signal);
 }
 
 bool server_t::acquire_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts)

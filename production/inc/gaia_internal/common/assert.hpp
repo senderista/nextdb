@@ -37,7 +37,7 @@ namespace common
 //
 // The ASSERT message is wrapped within an if that is evaluated only if the condition is false.
 // For this reason, it is optimal to put string concatenation within the ASSERT, eg.
-// ASSERT_PRECONDITION(gaia_fmt::format("Message {}", 123).c_str());
+// ASSERT_PRECONDITION(std::format("Message {}", 123).c_str());
 
 #ifdef DISABLE_ASSERTS
 #define DISABLE_ASSERT_PRECONDITION

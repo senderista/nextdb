@@ -11,16 +11,6 @@ bool client_t::is_session_open()
     return (s_session_context != nullptr && session_socket() != -1);
 }
 
-bool client_t::is_ping_session_open()
-{
-    return is_session_open() && session_options().session_type == session_type_t::ping;
-}
-
-bool client_t::is_ddl_session_open()
-{
-    return is_session_open() && session_options().session_type == session_type_t::ddl;
-}
-
 bool client_t::is_transaction_open()
 {
     return (s_session_context && s_session_context->private_locators.is_set());
@@ -31,24 +21,9 @@ gaia_txn_id_t client_t::get_current_txn_id()
     return txn_id();
 }
 
-void client_t::set_commit_trigger(triggers::commit_trigger_fn trigger_fn)
-{
-    s_txn_commit_trigger = trigger_fn;
-}
-
-bool client_t::has_commit_trigger()
-{
-    return (s_txn_commit_trigger != nullptr);
-}
-
 int client_t::get_session_socket_for_txn()
 {
     return session_socket();
-}
-
-bool client_t::is_valid_event(common::gaia_type_t type)
-{
-    return (s_txn_commit_trigger && !is_system_object(type));
 }
 
 void client_t::verify_txn_active()
@@ -173,15 +148,6 @@ client_t::get_stream_generator_for_socket(std::shared_ptr<int> stream_socket_ptr
     };
 }
 
-void client_t::log_event(
-    triggers::event_type_t event_type, common::gaia_type_t type,
-    common::gaia_id_t id, common::field_position_list_t changed_fields)
-{
-    DEBUG_ASSERT_PRECONDITION(
-        txn_id().is_valid(), "Event can only be logged in a transaction!");
-    events().emplace_back(event_type, type, id, changed_fields, txn_id());
-}
-
 gaia_txn_id_t client_t::txn_id()
 {
     return s_session_context->txn_context->txn_id;
@@ -190,16 +156,6 @@ gaia_txn_id_t client_t::txn_id()
 log_offset_t client_t::txn_log_offset()
 {
     return s_session_context->txn_context->txn_log_offset;
-}
-
-std::vector<gaia::db::triggers::trigger_event_t>& client_t::events()
-{
-    return s_session_context->txn_context->events;
-}
-
-config::session_options_t& client_t::session_options()
-{
-    return s_session_context->session_options;
 }
 
 int client_t::session_socket()

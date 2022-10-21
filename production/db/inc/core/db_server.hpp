@@ -59,15 +59,15 @@ public:
     static constexpr persistence_mode_t c_default_persistence_mode = persistence_mode_t::e_enabled;
 
 public:
-    server_config_t(server_config_t::persistence_mode_t persistence_mode, std::string instance_name, std::string data_dir, bool testing)
-        : m_persistence_mode(persistence_mode), m_instance_name(std::move(instance_name)), m_data_dir(std::move(data_dir)), m_skip_catalog_integrity_checks(testing)
+    server_config_t(server_config_t::persistence_mode_t persistence_mode, std::string instance_name, std::string data_dir)
+        : m_persistence_mode(persistence_mode), m_instance_name(std::move(instance_name)), m_data_dir(std::move(data_dir))
     {
     }
 
     inline persistence_mode_t persistence_mode();
     inline const std::string& instance_name();
     inline const std::string& data_dir();
-    inline bool skip_catalog_integrity_checks();
+    inline bool is_persistence_enabled();
 
 private:
     // Dummy constructor to allow server_t initialization.
@@ -80,7 +80,6 @@ private:
     persistence_mode_t m_persistence_mode;
     std::string m_instance_name;
     std::string m_data_dir;
-    bool m_skip_catalog_integrity_checks;
 };
 
 // For declarations of friend functions.
@@ -91,13 +90,11 @@ class server_t
     friend class gaia_ptr_t;
 
     friend gaia::db::locators_t* gaia::db::get_locators();
-    friend gaia::db::locators_t* gaia::db::get_locators_for_allocator();
     friend gaia::db::counters_t* gaia::db::get_counters();
     friend gaia::db::data_t* gaia::db::get_data();
     friend gaia::db::logs_t* gaia::db::get_logs();
     friend gaia::db::id_index_t* gaia::db::get_id_index();
     friend gaia::db::type_index_t* gaia::db::get_type_index();
-    friend gaia::db::index::indexes_t* gaia::db::get_indexes();
     friend gaia::db::txn_log_t* gaia::db::get_txn_log();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
@@ -111,8 +108,6 @@ private:
     static inline gaia_txn_id_t txn_id();
     static inline log_offset_t txn_log_offset();
     static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
-    static inline mapped_data_t<locators_t>& local_snapshot_locators();
-    static inline size_t last_snapshot_processed_log_record_count();
 
     static inline int session_socket();
     static inline std::vector<std::thread>& session_owned_threads();
@@ -141,11 +136,6 @@ private:
     static inline int s_server_shutdown_eventfd = -1;
     static inline int s_listening_socket = -1;
 
-    // Ensures that only one DDL session can run at any given point.
-    // Other sessions, DDL or Regular, will wait the DDL sessions to complete.
-    // Likewise, DDL session wait for current running session to complete.
-    static inline std::shared_mutex s_start_session_mutex;
-
     // These thread objects are owned by the client dispatch thread.
     static inline std::vector<std::thread> s_session_threads{};
 
@@ -155,10 +145,6 @@ private:
     static inline mapped_data_t<logs_t> s_shared_logs{};
     static inline mapped_data_t<id_index_t> s_shared_id_index{};
     static inline mapped_data_t<type_index_t> s_shared_type_index{};
-
-    static inline index::indexes_t s_global_indexes{};
-
-    static inline std::unique_ptr<persistent_store_manager> s_persistent_store{};
 
     // The allocated status of each log offset is tracked in this bitmap. When
     // opening a new txn, each session thread must allocate an offset for its txn
@@ -357,8 +343,6 @@ private:
         messages::session_state_t new_state);
 
     // Session state transition handler functions.
-    static void handle_connect_ping(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
-    static void handle_connect_ddl(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
     static void handle_connect(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
     static void handle_begin_txn(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
     static void handle_rollback_txn(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
@@ -384,8 +368,6 @@ private:
     // "Wildcard" transitions (current state = session_state_t::ANY) must be listed after
     // non-wildcard transitions with the same event, or the latter will never be applied.
     static inline constexpr valid_transition_t c_valid_transitions[] = {
-        {messages::session_state_t::DISCONNECTED, messages::session_event_t::CONNECT_PING, {messages::session_state_t::CONNECTED, handle_connect_ping}},
-        {messages::session_state_t::DISCONNECTED, messages::session_event_t::CONNECT_DDL, {messages::session_state_t::CONNECTED, handle_connect_ddl}},
         {messages::session_state_t::DISCONNECTED, messages::session_event_t::CONNECT, {messages::session_state_t::CONNECTED, handle_connect}},
         {messages::session_state_t::ANY, messages::session_event_t::CLIENT_SHUTDOWN, {messages::session_state_t::DISCONNECTED, handle_client_shutdown}},
         {messages::session_state_t::CONNECTED, messages::session_event_t::BEGIN_TXN, {messages::session_state_t::TXN_IN_PROGRESS, handle_begin_txn}},
@@ -393,7 +375,6 @@ private:
         {messages::session_state_t::TXN_IN_PROGRESS, messages::session_event_t::COMMIT_TXN, {messages::session_state_t::TXN_COMMITTING, handle_commit_txn}},
         {messages::session_state_t::TXN_COMMITTING, messages::session_event_t::DECIDE_TXN_COMMIT, {messages::session_state_t::CONNECTED, handle_decide_txn}},
         {messages::session_state_t::TXN_COMMITTING, messages::session_event_t::DECIDE_TXN_ABORT, {messages::session_state_t::CONNECTED, handle_decide_txn}},
-        {messages::session_state_t::TXN_COMMITTING, messages::session_event_t::DECIDE_TXN_ROLLBACK_FOR_ERROR, {messages::session_state_t::CONNECTED, handle_decide_txn}},
         {messages::session_state_t::ANY, messages::session_event_t::SERVER_SHUTDOWN, {messages::session_state_t::DISCONNECTED, handle_server_shutdown}},
         {messages::session_state_t::ANY, messages::session_event_t::REQUEST_STREAM, {messages::session_state_t::ANY, handle_request_stream}},
     };
@@ -409,34 +390,13 @@ private:
         log_offset_t txn_log_offset = c_invalid_log_offset,
         const std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_to_apply = {});
 
-    static void build_server_reply_error(
-        flatbuffers::FlatBufferBuilder& builder,
-        messages::session_event_t event,
-        messages::session_state_t old_state,
-        messages::session_state_t new_state,
-        const char* error_message);
-
     static void clear_server_state();
 
     static void init_memory_manager(bool initializing);
 
     static void init_shared_memory();
 
-    // Server-side index maintenance methods.
-
-    // Initialize index maintenance on startup.
-    static void init_indexes();
-
-    // Update in-memory indexes based on the txn log.
-    static void update_indexes_from_txn_log();
-
-    // TODO: Remove the apply_logs flag, because a snapshot can't be used
-    // correctly without first applying txn logs up to its begin timestamp.
-    static void create_or_refresh_local_snapshot(bool apply_logs);
-
-    static void recover_db();
-
-    static sigset_t mask_signals();
+    static sigset_t get_masked_signals();
 
     static void signal_handler(sigset_t sigset, int& signum);
 
@@ -502,16 +462,6 @@ private:
     static void gc_txn_log_from_offset(log_offset_t offset, bool is_committed);
 
     static void deallocate_txn_log(txn_log_t* txn_log, bool deallocate_new_offsets);
-
-    // The following method pairs are used to work on a startup transaction.
-
-    // This method allocates a new begin_ts and initializes its entry in the txn
-    // table. Returns the allocated txn_id.
-    static gaia_txn_id_t begin_startup_txn();
-
-    // This method creates a corresponding commit_ts to the txn above and initializes
-    // their entries in the txn table.
-    static void end_startup_txn();
 
     static void sort_log();
 

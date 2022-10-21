@@ -18,8 +18,8 @@
 #include "gaia/db/db.hpp"
 
 #include "gaia_internal/common/scope_guard.hpp"
+#include "gaia_internal/common/system_error.hpp"
 #include "gaia_internal/common/timer.hpp"
-#include "gaia_internal/db/db_client_config.hpp"
 #include "gaia_internal/db/gaia_ptr.hpp"
 
 #include "db_helpers.hpp"
@@ -72,7 +72,7 @@ private:
  */
 class db__core__concurrent_db_client__test : public ::testing::Test
 {
-public:
+protected:
     static constexpr char c_even_value[] = "ping";
     static constexpr char c_odd_value[] = "pong";
 
@@ -144,7 +144,7 @@ public:
         // Initialize this worker's local object reference.
         begin_transaction();
         auto obj = gaia_ptr_t::create(
-            gaia_id_t(object_id), c_object_type, 0, sizeof(c_even_value), c_even_value);
+            gaia_id_t(object_id), c_object_type, sizeof(c_even_value), c_even_value);
         commit_transaction();
 
         // Signal the controller that we're ready.

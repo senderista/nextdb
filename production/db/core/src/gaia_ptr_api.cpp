@@ -43,28 +43,8 @@ gaia_ptr_t create(
     size_t data_size,
     const void* data)
 {
-    const type_metadata_t& metadata = type_registry_t::instance().get(type);
-    reference_offset_t references_count = metadata.references_count();
-
-    gaia_ptr_t obj = gaia_ptr_t::create_no_txn(id, type, references_count, data_size, data);
-
-    if (metadata.has_value_linked_relationship())
-    {
-        db_object_t* obj_ptr = obj.to_ptr();
-        auto_connect(
-            id,
-            type,
-            // NOLINTNEXTLINE: cppcoreguidelines-pro-type-const-cast
-            const_cast<gaia_id_t*>(obj_ptr->references()),
-            reinterpret_cast<const uint8_t*>(obj_ptr->data()));
-    }
-
+    gaia_ptr_t obj = gaia_ptr_t::create_no_txn(id, type, data_size, data);
     obj.finalize_create();
-
-    if (client_t::is_valid_event(type))
-    {
-        client_t::log_event(triggers::event_type_t::row_insert, type, id, triggers::c_empty_position_list);
-    }
     return obj;
 }
 
@@ -75,19 +55,10 @@ void update_payload(gaia_id_t id, size_t data_size, const void* data)
     {
         throw invalid_object_id_internal(id);
     }
-    update_payload(obj, data_size, data);
+    obj.update_payload(data_size, data);
 }
 
-void update_payload(gaia_ptr_t& obj, size_t data_size, const void* data)
-{
-    db_object_t* old_this = obj.to_ptr();
-    gaia_offset_t old_offset = obj.to_offset();
-
-    obj.update_payload_no_txn(data_size, data);
-    obj.finalize_update(old_offset);
-}
-
-void remove(gaia_ptr_t& object, bool force)
+void remove(gaia_ptr_t& object)
 {
     if (!object)
     {

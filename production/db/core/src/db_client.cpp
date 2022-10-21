@@ -8,6 +8,7 @@
 
 #include "db_client.hpp"
 
+#include <format>
 #include <functional>
 #include <optional>
 #include <thread>
@@ -21,17 +22,13 @@
 #include "gaia_internal/common/scope_guard.hpp"
 #include "gaia_internal/common/socket_helpers.hpp"
 #include "gaia_internal/common/system_error.hpp"
-#include "gaia_internal/db/catalog_core.hpp"
 #include "gaia_internal/db/db_types.hpp"
-#include "gaia_internal/db/triggers.hpp"
 
 #include "db_helpers.hpp"
 #include "db_internal_types.hpp"
-#include "predicate.hpp"
 
 using namespace gaia::common;
 using namespace gaia::db;
-using namespace gaia::db::triggers;
 using namespace gaia::db::memory_manager;
 using namespace gaia::db::messages;
 using namespace flatbuffers;
@@ -78,7 +75,7 @@ int client_t::get_session_socket(const std::string& socket_name)
     // in the server address structure after the prefix null byte.
     ASSERT_INVARIANT(
         socket_name.size() <= sizeof(server_addr.sun_path) - 1,
-        gaia_fmt::format("Socket name '{}' is too long!", socket_name).c_str());
+        std::format("Socket name '{}' is too long!", socket_name).c_str());
 
     // We prepend a null byte to the socket name so the address is in the
     // (Linux-exclusive) "abstract namespace", i.e., not bound to the
@@ -110,7 +107,7 @@ int client_t::get_session_socket(const std::string& socket_name)
 // and would be difficult to handle properly even if it were possible.
 // In any case, send_msg_with_fds()/recv_msg_with_fds() already throws a
 // peer_disconnected exception when the other end of the socket is closed.
-void client_t::begin_session(config::session_options_t options)
+void client_t::begin_session()
 {
     // Fail if a session already exists on this thread.
     verify_no_session();
@@ -132,33 +129,20 @@ void client_t::begin_session(config::session_options_t options)
         ASSERT_INVARIANT(!data_mapping.is_set(), "Segment is already mapped!");
     }
 
-    s_session_context->session_options = options;
-
     // Connect to the server's well-known socket name, and ask it
     // for the data and locator shared memory segment fds.
     try
     {
-        s_session_context->session_socket = get_session_socket(session_options().db_instance_name);
+        s_session_context->session_socket = get_session_socket(c_default_instance_name);
     }
     catch (const system_error& e)
     {
         throw server_connection_failed_internal(e.what(), e.get_errno());
     }
 
-    // Determine the type of session event based on the session type specified in the session options.
-    session_event_t session_event = session_event_t::CONNECT;
-    if (session_options().session_type == session_type_t::ping)
-    {
-        session_event = session_event_t::CONNECT_PING;
-    }
-    else if (session_options().session_type == session_type_t::ddl)
-    {
-        session_event = session_event_t::CONNECT_DDL;
-    }
-
     // Send the server the connection request.
     FlatBufferBuilder builder;
-    build_client_request(builder, session_event);
+    build_client_request(builder, session_event_t::CONNECT);
 
     client_messenger_t client_messenger;
 
@@ -241,10 +225,6 @@ void client_t::begin_transaction()
         !(s_session_context->txn_context),
         "Transaction context should not be initialized already at the start of a new transaction!");
 
-    ASSERT_PRECONDITION(
-        session_options().session_type != session_type_t::ping,
-        "Ping sessions should not be starting transactions");
-
     s_session_context->txn_context = std::make_shared<client_transaction_context_t>();
     auto cleanup_txn_context = make_scope_guard([&] {
         s_session_context->txn_context.reset();
@@ -302,29 +282,6 @@ void client_t::rollback_transaction()
     send_msg_with_fds(session_socket(), nullptr, 0, builder.GetBufferPointer(), builder.GetSize());
 }
 
-// This method needs to be updated whenever a new pre_commit_validation_failure exception
-// is being introduced.
-void throw_exception_from_message(const char* error_message)
-{
-    // Check the error message against the known set of pre_commit_validation_failure error messages.
-    if (strlen(error_message) > strlen(index::unique_constraint_violation_internal::c_error_description)
-        && strncmp(
-               error_message,
-               index::unique_constraint_violation_internal::c_error_description,
-               strlen(index::unique_constraint_violation_internal::c_error_description))
-            == 0)
-    {
-        throw index::unique_constraint_violation_internal(error_message);
-    }
-    else
-    {
-        ASSERT_UNREACHABLE(
-            gaia_fmt::format(
-                "The server has reported an unexpected error message: '{}'", error_message)
-                .c_str());
-    }
-}
-
 // This method returns void on a commit decision and throws on an abort decision.
 // It sends a message to the server containing the fd of this txn's log segment and
 // will block waiting for a reply from the server.
@@ -354,19 +311,12 @@ void client_t::commit_transaction()
     session_event_t event = client_messenger.server_reply()->event();
     ASSERT_INVARIANT(
         event == session_event_t::DECIDE_TXN_COMMIT
-            || event == session_event_t::DECIDE_TXN_ABORT
-            || event == session_event_t::DECIDE_TXN_ROLLBACK_FOR_ERROR,
+            || event == session_event_t::DECIDE_TXN_ABORT,
         c_message_unexpected_event_received);
 
-    // We can only validate the transaction id if there was no error.
-    // This is because the server will clear the transaction id
-    // much earlier than it constructs its reply.
-    if (event != session_event_t::DECIDE_TXN_ROLLBACK_FOR_ERROR)
-    {
-        const transaction_info_t* txn_info = client_messenger.server_reply()->data_as_transaction_info();
-        ASSERT_INVARIANT(
-            txn_info->transaction_id() == txn_id(), "Unexpected transaction id!");
-    }
+    const transaction_info_t* txn_info = client_messenger.server_reply()->data_as_transaction_info();
+    ASSERT_INVARIANT(
+        txn_info->transaction_id() == txn_id(), "Unexpected transaction id!");
 
     // Throw an exception on server-side abort.
     // REVIEW: We could include the gaia_ids of conflicting objects in
@@ -374,20 +324,6 @@ void client_t::commit_transaction()
     if (event == session_event_t::DECIDE_TXN_ABORT)
     {
         throw transaction_update_conflict_internal();
-    }
-    // TODO: Server should communicate specific errors to the client to allow
-    // throwing specific exceptions.
-    else if (event == session_event_t::DECIDE_TXN_ROLLBACK_FOR_ERROR)
-    {
-        // Get error information from server.
-        const transaction_error_t* txn_error = client_messenger.server_reply()->data_as_transaction_error();
-        const char* error_message = txn_error->error_message()->c_str();
-
-        ASSERT_PRECONDITION(
-            error_message != nullptr && strlen(error_message) > 0,
-            "No error message was provided for a DECIDE_TXN_ROLLBACK_FOR_ERROR event!");
-
-        throw_exception_from_message(error_message);
     }
 }
 

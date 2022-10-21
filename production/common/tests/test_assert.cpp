@@ -7,14 +7,13 @@
 ////////////////////////////////////////////////////
 
 #include <random>
+#include <format>
 
 #include <gtest/gtest.h>
 
 #include "gaia_internal/common/assert.hpp"
 #include "gaia_internal/common/debug_assert.hpp"
 #include "gaia_internal/common/timer.hpp"
-
-#include <gaia_spdlog/fmt/fmt.h>
 
 using namespace std;
 using namespace gaia::common;
@@ -90,7 +89,7 @@ inline int32_t check_number_format(int32_t number)
 {
     ASSERT_PRECONDITION(
         number >= 0,
-        gaia_fmt::format("check_number() was called with a negative number: {}!", number).c_str());
+        std::format("check_number() was called with a negative number: {}!", number).c_str());
 
     return number + 1;
 }
@@ -99,7 +98,7 @@ inline int32_t check_number_debug(int32_t number)
 {
     DEBUG_ASSERT_PRECONDITION(
         number >= 0,
-        gaia_fmt::format("check_number() was called with a negative number: {}!", number).c_str());
+        std::format("check_number() was called with a negative number: {}!", number).c_str());
 
     return number + 1;
 }
@@ -178,7 +177,7 @@ TEST(common__assert__test, perf)
 
     elapsed = g_timer_t::get_duration(start);
 
-    cout << ">>> Time Elapsed (helper with gaia_fmt::format): " << g_timer_t::ns_to_ms(elapsed) << "ms." << endl;
+    cout << ">>> Time Elapsed (helper with std::format): " << g_timer_t::ns_to_ms(elapsed) << "ms." << endl;
     cout << ">>> Average time: " << elapsed / (c_count_numbers * c_count_iterations) << "ns." << endl;
 
     // Test regular asserts with a static assertion message.

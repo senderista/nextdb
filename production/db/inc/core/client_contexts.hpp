@@ -40,8 +40,6 @@ struct client_session_context_t
     // The transaction context.
     std::shared_ptr<client_transaction_context_t> txn_context;
 
-    config::session_options_t session_options;
-
     memory_manager::memory_manager_t memory_manager;
     memory_manager::chunk_manager_t chunk_manager;
 
@@ -57,6 +55,7 @@ struct client_session_context_t
     mapped_data_t<data_t> shared_data;
     mapped_data_t<logs_t> shared_logs;
     mapped_data_t<id_index_t> shared_id_index;
+    mapped_data_t<type_index_t> shared_type_index;
 
     // The list of data mappings that we manage together.
     // The order of declarations must be the order of data_mapping_t::index_t values!

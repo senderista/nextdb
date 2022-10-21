@@ -19,7 +19,6 @@ namespace db
 
 void server_transaction_context_t::clear()
 {
-    local_snapshot_locators.close();
 }
 
 void server_session_context_t::clear()

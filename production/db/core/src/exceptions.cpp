@@ -87,19 +87,6 @@ invalid_object_id_internal::invalid_object_id_internal(common::gaia_id_t id)
     m_message = message.str();
 }
 
-object_still_referenced_internal::object_still_referenced_internal(
-    common::gaia_id_t id, common::gaia_type_t object_type,
-    common::gaia_id_t other_id, common::gaia_type_t other_type)
-{
-    std::stringstream message;
-    message
-        << "Cannot delete object with ID '" << id << "', type '" << object_type
-        << "', because it is still referenced by another object with ID '"
-        << other_id << "', type '" << other_type << "'. "
-        << "Use the 'force' option to force delete the object.";
-    m_message = message.str();
-}
-
 object_too_large_internal::object_too_large_internal(size_t total_len, uint16_t max_len)
 {
     std::stringstream message;
@@ -146,84 +133,10 @@ session_limit_exceeded_internal::session_limit_exceeded_internal()
     m_message = "Server session limit exceeded.";
 }
 
-invalid_reference_offset_internal::invalid_reference_offset_internal(
-    gaia::common::gaia_type_t type, gaia::common::reference_offset_t offset)
-{
-    std::stringstream message;
-    message << "Gaia type '" << type << "' has no relationship for the offset '" << offset << "'.";
-    m_message = message.str();
-}
-
-invalid_relationship_type_internal::invalid_relationship_type_internal(
-    gaia::common::reference_offset_t offset,
-    gaia::common::gaia_type_t expected_type,
-    gaia::common::gaia_type_t found_type)
-{
-    std::stringstream message;
-    message
-        << "Relationship with offset '" << offset << "' requires type '" << expected_type
-        << "' but found type '" << found_type << "'.";
-    m_message = message.str();
-}
-
-single_cardinality_violation_internal::single_cardinality_violation_internal(gaia::common::gaia_type_t type, gaia::common::reference_offset_t offset)
-{
-    std::stringstream message;
-    message
-        << "Gaia type '" << type << "' has single cardinality for the relationship with offset '" << offset
-        << "', but multiple children are being added.";
-    m_message = message.str();
-}
-
-child_already_referenced_internal::child_already_referenced_internal(gaia::common::gaia_type_t child_type, gaia::common::reference_offset_t offset)
-{
-    std::stringstream message;
-    message
-        << "Gaia type '" << child_type
-        << "' already has a reference for the relationship with offset '" << offset << "'.";
-    m_message = message.str();
-}
-
-invalid_child_reference_internal::invalid_child_reference_internal(
-    gaia::common::gaia_type_t child_type,
-    gaia::common::gaia_id_t child_id,
-    gaia::common::gaia_type_t parent_type,
-    gaia::common::gaia_id_t parent_id)
-{
-    std::stringstream message;
-    message
-        << "Cannot remove child with id '" << child_id
-        << "' and type '" << child_type
-        << "' from parent with id '" << parent_id
-        << "' and type '" << parent_type << "'. The child has a different parent.";
-    m_message = message.str();
-}
-
 memory_allocation_error_internal::memory_allocation_error_internal()
 {
     m_message = "The Gaia database ran out of memory.";
 }
-
-namespace index
-{
-
-unique_constraint_violation_internal::unique_constraint_violation_internal(const char* error_message)
-{
-    m_message = error_message;
-}
-
-unique_constraint_violation_internal::unique_constraint_violation_internal(const char* error_table_name, const char* error_index_name)
-{
-    std::stringstream message;
-    message
-        << c_error_description
-        << " Cannot insert a duplicate key in table '"
-        << error_table_name << "', because of the unique constraint of"
-        << " index '" << error_index_name << "'.";
-    m_message = message.str();
-}
-
-} // namespace index
 
 } // namespace db
 } // namespace gaia

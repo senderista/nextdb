@@ -14,7 +14,6 @@
 
 #include "gaia_internal/common/assert.hpp"
 #include "gaia_internal/common/generator_iterator.hpp"
-#include "gaia_internal/common/system_table_types.hpp"
 #include "gaia_internal/db/db_object.hpp"
 #include "gaia_internal/db/db_types.hpp"
 #include "gaia_internal/db/gaia_ptr_api.hpp"
@@ -99,13 +98,10 @@ protected:
 
     inline bool is(common::gaia_type_t type) const;
 
-    gaia_ptr_t find_next(common::gaia_type_t type) const;
-
 private:
     static gaia_ptr_t create_no_txn(
         common::gaia_id_t id,
         common::gaia_type_t type,
-        common::reference_offset_t num_refs,
         size_t data_size,
         const void* data);
 

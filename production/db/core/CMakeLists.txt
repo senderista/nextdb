@@ -66,7 +66,6 @@ add_library(gaia_db_client STATIC
   src/gaia_ptr.cpp
   src/memory_manager.cpp
   src/txn_metadata.cpp
-  src/type_metadata.cpp
 )
 
 add_dependencies(gaia_db_client ${FBS_SOURCE_FILENAMES})
@@ -106,7 +105,6 @@ set(GAIA_DB_SERVER_SOURCES
   src/gaia_ptr.cpp
   src/memory_manager.cpp
   src/server_contexts.cpp
-  src/system_checks.cpp
   src/txn_metadata.cpp
 )
 
@@ -156,6 +154,4 @@ set(GAIA_DB_CORE_TEST_INCLUDES
 add_gtest(test_type_index tests/test_type_index.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_common;gaia_db_client;${LIB_CAP};${LIB_EXPLAIN}")
 add_gtest(test_db_client tests/test_db_client.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
 add_gtest(test_concurrent_db_client tests/test_concurrent_db_client.cpp "${GEN_DIR};${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
-add_gtest(test_gaia_ptr_api tests/test_gaia_ptr_api.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_common;gaia_db_client;gaia_direct;gaia_catalog")
-add_gtest(test_env_instance_name tests/test_db_server_env.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_common;gaia_db_client;gaia_direct")
 add_gtest(test_sessions tests/test_sessions.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")

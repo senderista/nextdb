@@ -68,7 +68,7 @@ public:
     static void commit_transaction();
 
     // Internal version of begin_session(), called by public interface in db.hpp.
-    static void begin_session(config::session_options_t session_options);
+    static void begin_session();
 
     static inline int get_session_socket_for_txn();
 
@@ -88,12 +88,6 @@ public:
 
     static inline void verify_session_active();
     static inline void verify_no_session();
-
-    // Called by internal code to log events for rule invocations.
-    static inline bool is_valid_event(common::gaia_type_t type);
-    static inline void log_event(
-        triggers::event_type_t event_type, common::gaia_type_t type,
-        common::gaia_id_t id, common::field_position_list_t changed_fields);
 
 private:
     // Context getters.

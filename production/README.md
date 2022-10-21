@@ -2,12 +2,6 @@
 This is a folder for production code. Only code that is meant to be shipped should be placed here.
 
 ## Build Overview
-We have three main sets of targets we build:
-1. **Core** - this includes the core platform components:  catalog, database (client and server), rules engine, direct access classes, and associated tools.
-1. **SDK** - this includes everything in core plus: LLVM libraries, rules translation engine (gaiat), and definitions for building SDK deb and rpm packages.
-1. **LLVMTests** - this includes the LLVM test infrastructure for testing ruleset files as well as ruleset compilation tests.
-
-Because building LLVM takes much longer than just building Core, we do not build it by default.  However, the SDK does have dependencies on core headers.  If you are changing headers for the catalog, database, or Direct Access components, it is wise to build the entire SDK to verify that you haven't broken the SDK build.
 
 We have two ways to build the configurations listed above:
 1. Using docker and our `gdev` tool: this is what our TeamCity Continuous Integration servers use to build and run tests in a consistent "approved" environment.
@@ -26,43 +20,6 @@ cmake ..
 make -j<number of CPUs>
 ```
 If `CMAKE_BUILD_TYPE` is not specified on the command line, then by default we add compile and link flags to include debugging information.
-
-### SDK
-```
-cmake -DCMAKE_MODULE_PATH=/usr/local/lib/cmake/CPackDebHelper -DBUILD_GAIA_SDK=ON ..
-make -j<number of CPUs>
-```
-To install CPackDebHelper, you can follow the steps in the CPackDebHelper [gdev.cfg](../third_party/production/CPackDebHelper/gdev.cfg) file. Note that you can specify your own path to the CPackDebHelper `cmake` module depending upon where you install it.
-
-If `BUILD_GAIA_SDK` is set to `ON` then `CMAKE_BUILD_TYPE` will be set to `Release`. This is done by default because debug builds of LLVM take much longer than retail builds.  We've also seen some of our local dev machines run out of memory when attempting to do debug LLVM builds.
-
-#### Building the distribution packages
-
-After building the SDK, it becomes possible to also build the distribution packages. To do this, execute the following command in the `GaiaPlatform/production/build` folder:
-
-```
-make package
-```
-
-After generating the packages, the Debian package can be installed by executing the following command, after making sure to update the referenced package version to match what was produced by the build:
-
-```
-sudo apt install ./gaia-0.1.0_amd64.deb
-```
-
-For uninstalling the package, execute:
-
-```
-sudo apt remove gaia
-```
-
-### LLVMTests
-```
-cmake -DBUILD_GAIA_LLVM_TESTS=ON ..
-make -j<number of CPUs> check-all
-```
-
-If `BUILD_GAIA_LLVM_TESTS` is set to `ON` then `CMAKE_BUILD_TYPE` will be set to `Release` as well.
 
 ### Other Flags
 Other CMake variables we use but are not required:

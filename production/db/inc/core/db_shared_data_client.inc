@@ -125,8 +125,3 @@ static gaia::db::gaia_txn_id_t get_txn_id()
 {
     return gaia::db::client_t::s_session_context->txn_context->txn_id;
 }
-
-static const gaia::db::caches::db_caches_t* get_db_caches()
-{
-    return gaia::db::client_t::s_session_context->db_caches.get();
-}

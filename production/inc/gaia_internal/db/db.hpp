@@ -16,47 +16,6 @@ namespace gaia
 namespace db
 {
 
-// Session types.
-enum class session_type_t : uint8_t
-{
-    not_set = 0,
-
-    // These are sessions used by Gaia applications.
-    regular = 1,
-
-    // These are sessions used for setting up the database schema.
-    ddl = 2,
-
-    // These are sessions use to check if the server started successfully.
-    ping = 3,
-};
-
-/**
- * @brief Checks whether a ping session is open.
- */
-bool is_ping_session_open();
-
-/**
- * @brief Checks whether a DDL session is open.
- */
-bool is_ddl_session_open();
-
-/**
- * @brief Special version of begin_session() used for testing that the server is up and running.
- */
-void begin_ping_session();
-
-/**
- * @brief Special version of begin_session() used for DDL operations.
- */
-void begin_ddl_session();
-
-/**
- * @brief Sets the DB client's commit trigger function.
- * Called by the rules engine only during initialization and shutdown.
- */
-void set_commit_trigger(gaia::db::triggers::commit_trigger_fn trigger_fn);
-
 /**
  * @brief Internal API for getting the begin_ts of the current txn.
  */

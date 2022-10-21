@@ -31,11 +31,7 @@
 #include "gaia_internal/common/scope_guard.hpp"
 #include "gaia_internal/common/socket_helpers.hpp"
 #include "gaia_internal/common/system_error.hpp"
-#include "gaia_internal/db/catalog_core.hpp"
 #include "gaia_internal/db/db_object.hpp"
-#include "gaia_internal/db/index_builder.hpp"
-
-#include "gaia_spdlog/fmt/fmt.h"
 
 #include "db_helpers.hpp"
 #include "memory_helpers.hpp"
@@ -487,51 +483,6 @@ void server_t::handle_request_stream(
 
     switch (request->data_type())
     {
-    case request_data_t::index_scan:
-    {
-        auto request_data = request->data_as_index_scan();
-        auto index_id = static_cast<gaia_id_t>(request_data->index_id());
-        auto txn_id = static_cast<gaia_txn_id_t>(request_data->txn_id());
-        auto query_type = request_data->query_type();
-        auto index = id_to_index(index_id);
-
-        ASSERT_INVARIANT(index != nullptr, "Cannot find index!");
-
-        switch (query_type)
-        {
-        case index_query_t::NONE:
-            start_stream_producer(server_socket, index->generator(txn_id));
-            break;
-        case index_query_t::index_point_read_query_t:
-        case index_query_t::index_equal_range_query_t:
-        {
-            std::vector<char> key_storage;
-            index::index_key_t key;
-            {
-                // Create local snapshot to query catalog for key serialization schema.
-                bool apply_logs = true;
-                create_or_refresh_local_snapshot(apply_logs);
-                const payload_types::serialization_buffer_t* key_buffer;
-
-                if (query_type == index_query_t::index_point_read_query_t)
-                {
-                    auto query = request_data->query_as_index_point_read_query_t();
-                    key_buffer = query->key();
-                }
-                else
-                {
-                    auto query = request_data->query_as_index_equal_range_query_t();
-                    key_buffer = query->key();
-                }
-                key_storage = std::vector(
-                    reinterpret_cast<const char*>(key_buffer->Data()),
-                    reinterpret_cast<const char*>(key_buffer->Data()) + key_buffer->size());
-                auto key_read_buffer = payload_types::data_read_buffer_t(key_storage.data());
-                key = index::index_builder_t::deserialize_key(index_id, key_read_buffer);
-            }
-            start_stream_producer(server_socket, index->equal_range_generator(txn_id, std::move(key_storage), key));
-            break;
-        }
         default:
             ASSERT_UNREACHABLE(c_message_unexpected_query_type);
         }
@@ -769,71 +720,6 @@ void server_t::deallocate_object(gaia_offset_t offset)
 
     // Delegate deallocation of the object to the chunk manager.
     chunk_manager.deallocate(offset);
-}
-
-// Initialize indexes on startup.
-void server_t::init_indexes()
-{
-    // No data to index-- nothing to do here.
-    if (s_server_conf.persistence_mode() == server_config_t::persistence_mode_t::e_disabled)
-    {
-        return;
-    }
-
-    auto cleanup = make_scope_guard([] { end_startup_txn(); });
-
-    // Allocate new txn id for initializing indexes.
-    begin_startup_txn();
-
-    // Create initial index data structures.
-    for (const auto& table : catalog_core::list_tables())
-    {
-        for (const auto& index : catalog_core::list_indexes(table.id()))
-        {
-            index::index_builder_t::create_empty_index(index);
-        }
-    }
-
-    gaia_locator_t locator = c_invalid_gaia_locator;
-    gaia_locator_t last_locator = get_last_locator();
-    while ((++locator).is_valid() && locator <= last_locator)
-    {
-        auto obj = locator_to_ptr(locator);
-
-        // Skip catalog core objects -- they are not indexed.
-        if (is_catalog_core_object(obj->type))
-        {
-            continue;
-        }
-
-        gaia_id_t table_id = type_id_mapping_t::instance().get_table_id(obj->type);
-        if (!table_id.is_valid())
-        {
-            // Orphaned object detected. We continue instead of throwing here
-            // because types can be orphaned after DROP TABLE is executed (the
-            // table's type is removed from the catalog and in-memory data is
-            // deleted, but the old data is not removed from the persistent
-            // store and will be recreated on recovery). This should be reverted
-            // once we no longer orphan objects during a DROP operation.
-            std::cerr << "Cannot find type for object " << obj->id << " in the catalog!";
-            continue;
-        }
-
-        for (const auto& index : catalog_core::list_indexes(table_id))
-        {
-            index::index_builder_t::populate_index(index.id(), locator);
-        }
-    }
-}
-
-// On commit, update in-memory-indexes to reflect logged operations.
-void server_t::update_indexes_from_txn_log()
-{
-    bool apply_logs = true;
-    create_or_refresh_local_snapshot(apply_logs);
-
-    index::index_builder_t::update_indexes_from_txn_log(
-        get_txn_log(), 0, s_server_conf.skip_catalog_integrity_checks());
 }
 
 void server_t::recover_db()
@@ -2059,11 +1945,6 @@ void server_t::gc_txn_log_from_offset(log_offset_t log_offset, bool is_committed
 {
     txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
 
-    // Remove index entries that might be referencing obsolete versions before
-    // actually deallocating them.
-    bool deallocate_new_offsets = !is_committed;
-    index::index_builder_t::gc_indexes_from_txn_log(txn_log, deallocate_new_offsets);
-
     // If the txn committed, we deallocate only undo versions, because the
     // redo versions may still be visible after the txn has fallen
     // behind the watermark. If the txn aborted, then we deallocate only
@@ -2566,11 +2447,6 @@ void server_t::truncate_txn_table()
         return;
     }
 
-    // Mark any index entries as committed before the metadata is truncated. At this point, all
-    // aborted/terminated index entries before the pre-truncate watermark should have been
-    // garbage collected.
-    index::index_builder_t::mark_index_entries_committed(new_pre_truncate_watermark);
-
     // We advanced the pre-truncate watermark, so actually truncate the txn
     // table by decommitting its unused physical pages. Because this
     // operation is concurrency-safe and idempotent, it can be done without
@@ -2656,29 +2532,6 @@ void server_t::txn_rollback(bool client_disconnected)
     txn_metadata_t::set_active_txn_terminated(txn_id());
 }
 
-void server_t::perform_pre_commit_work_for_txn()
-{
-    // This assertion is meant to be tripped if the number of system indexes changes
-    // without updating the c_system_index_count constant.
-    // DDL sessions are exempt of this condition, because they're used to create system indexes.
-    // We also have some scenarios in which the database is used
-    // without initializing the catalog, so there will be no system indexes at all.
-    // In all other cases, we should find at least the number of system indexes.
-    ASSERT_INVARIANT(
-        (s_session_context->session_type == session_type_t::ddl)
-            || get_indexes()->size() == 0
-            || get_indexes()->size() >= gaia::catalog::c_system_index_count,
-        "Fewer indexes than expected were found during perform_pre_commit_work_for_txn()!");
-
-    // Only update indexes in DDL sessions (when new ones could be created)
-    // or if we see that user indexes were created in addition to the catalog ones.
-    if ((s_session_context->session_type == session_type_t::ddl)
-        || get_indexes()->size() > gaia::catalog::c_system_index_count)
-    {
-        update_indexes_from_txn_log();
-    }
-}
-
 // Sort all txn log records by locator. This enables us to use fast binary
 // search and merge intersection algorithms for conflict detection.
 void server_t::sort_log()
@@ -2699,9 +2552,6 @@ void server_t::sort_log()
 // This method returns true for a commit decision and false for an abort decision.
 bool server_t::txn_commit()
 {
-    // Perform pre-commit work.
-    perform_pre_commit_work_for_txn();
-
     // Before registering the log, sort by locator for fast conflict detection.
     sort_log();
 

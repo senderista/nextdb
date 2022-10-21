@@ -113,8 +113,3 @@ static gaia::db::gaia_txn_id_t get_txn_id()
     }
     return c_invalid_gaia_txn_id;
 }
-
-static const gaia::db::caches::db_caches_t* get_db_caches()
-{
-    return nullptr;
-}

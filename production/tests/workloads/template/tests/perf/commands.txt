@@ -1,1 +1,0 @@
-some commands to fire at the application here.

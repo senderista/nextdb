@@ -1,6 +1,0 @@
-namespace TestSerialization;
-
-table serialization
-{
-    data: [byte];
-}

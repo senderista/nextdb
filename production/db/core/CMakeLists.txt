@@ -18,12 +18,7 @@ set(GAIA_DB_CORE_PRIVATE_INCLUDES
   "${GAIA_DB_INC}/core"
   "${GAIA_DB_INC}/index"
   "${GAIA_DB_INC}/memory_manager"
-  "${GAIA_DB_INC}/payload_types"
-  "${GAIA_DB_INC}/query_processor"
-  "${ROCKSDB_INC}"
-  "${ROCKSDB_UTIL}"
   "${PROJECT_SOURCE_DIR}/inc"
-  "${GAIA_SPDLOG_INC}"
 )
 
 message(VERBOSE "GAIA_DB_CORE_PRIVATE_INCLUDES=${GAIA_DB_CORE_PRIVATE_INCLUDES}")
@@ -36,10 +31,7 @@ set(GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 # The names of the following source files should be unique because they'll be used as targets.
 set(FBS_SOURCES
   "${PROJECT_SOURCE_DIR}/src/flatbuffers/messages.fbs"
-  "${PROJECT_SOURCE_DIR}/src/flatbuffers/gaia_table.fbs"
-  "${PROJECT_SOURCE_DIR}/src/flatbuffers/gaia_field.fbs"
-  "${PROJECT_SOURCE_DIR}/src/flatbuffers/gaia_relationship.fbs"
-  "${PROJECT_SOURCE_DIR}/src/flatbuffers/gaia_index.fbs")
+)
 
 set(FBS_SOURCE_FILENAMES "")
 foreach(FBS_SOURCE ${FBS_SOURCES})
@@ -63,24 +55,17 @@ endforeach(FBS_SOURCE)
 # Database-related code begins here.
 ###############################################
 add_library(gaia_db_client STATIC
-  src/catalog_core.cpp
   src/chunk_manager.cpp
   src/client_contexts.cpp
   src/client_messenger.cpp
-  src/db_caches.cpp
   src/db_client_api.cpp
-  src/db_client_config.cpp
   src/db_client.cpp
-  src/db_server_instance.cpp
   src/exceptions.cpp
   src/gaia_ptr_api.cpp
   src/gaia_ptr_client.cpp
   src/gaia_ptr.cpp
-  src/index_builder.cpp
   src/memory_manager.cpp
-  src/payload_diff.cpp
   src/txn_metadata.cpp
-  src/type_id_mapping.cpp
   src/type_metadata.cpp
 )
 
@@ -89,7 +74,7 @@ configure_gaia_target(gaia_db_client)
 target_include_directories(gaia_db_client PUBLIC ${GAIA_DB_CORE_PUBLIC_INCLUDES})
 target_include_directories(gaia_db_client PRIVATE ${GAIA_DB_CORE_PRIVATE_INCLUDES})
 target_link_libraries(gaia_db_client PUBLIC gaia_common)
-target_link_libraries(gaia_db_client PRIVATE gaia_payload_types gaia_index gaia_qp dac_catalog ${LIB_EXPLAIN} ${LIB_CAP} dl)
+target_link_libraries(gaia_db_client PRIVATE ${LIB_EXPLAIN} ${LIB_CAP} dl)
 
 # Suppress spurious warnings about zero-initialized structs.
 target_compile_options(gaia_db_client PRIVATE -Wno-missing-field-initializers)
@@ -100,22 +85,6 @@ target_include_directories(gaia_db_client SYSTEM PRIVATE "${GEN_DIR}")
 
 # libstdc++ apparently needs libatomic for struct last_allocation_metadata_t, even though it's 8 bytes.
 target_link_libraries(gaia_db_client PRIVATE atomic)
-
-add_library(rocks_wrapper STATIC
-  src/rdb_wrapper.cpp
-  src/rdb_object_converter.cpp
-  src/persistent_store_manager.cpp)
-# Add GAIA_DB_SERVER preprocessor definition for conditional includes.
-target_compile_definitions(rocks_wrapper PUBLIC GAIA_DB_SERVER=1)
-configure_gaia_target(rocks_wrapper)
-target_include_directories(rocks_wrapper PRIVATE
-  "${GAIA_DB_CORE_PUBLIC_INCLUDES}"
-  "${GAIA_DB_CORE_PRIVATE_INCLUDES}")
-target_include_directories(rocks_wrapper SYSTEM PRIVATE "${FLATBUFFERS_INC}")
-target_include_directories(rocks_wrapper SYSTEM PRIVATE "${GEN_DIR}")
-# The client is required to create gaia objects on recovery.
-target_link_libraries(rocks_wrapper PUBLIC rocksdb gaia_common)
-add_dependencies(rocks_wrapper ${FBS_SOURCE_FILENAMES})
 
 # Liburing
 # Choose static version of the library.
@@ -129,37 +98,16 @@ else()
   message(FATAL_ERROR "liburing is required.")
 endif()
 
-add_library(gaia_db_persistence STATIC
-  src/async_disk_writer.cpp
-  src/async_write_batch.cpp
-  src/log_file.cpp
-  src/log_io.cpp)
-# Add GAIA_DB_SERVER preprocessor definition for conditional includes.
-target_compile_definitions(gaia_db_persistence PUBLIC GAIA_DB_SERVER=1)
-configure_gaia_target(gaia_db_persistence)
-target_include_directories(gaia_db_persistence PRIVATE
-  "${GAIA_DB_CORE_PUBLIC_INCLUDES}"
-  "${GAIA_DB_CORE_PRIVATE_INCLUDES}")
-target_include_directories(gaia_db_persistence SYSTEM PRIVATE "${FLATBUFFERS_INC}")
-target_include_directories(gaia_db_persistence SYSTEM PRIVATE "${GEN_DIR}")
-target_include_directories(gaia_db_persistence SYSTEM PRIVATE "${LIBURING_INCLUDE_DIR}")
-# Only need util, not all of rocks.
-target_link_libraries(gaia_db_persistence PUBLIC rocksdb "${LIBURING_LIBRARY}")
-add_dependencies(gaia_db_persistence gaia_common ${FBS_SOURCE_FILENAMES})
-
 set(GAIA_DB_SERVER_SOURCES
-  src/catalog_core.cpp
   src/chunk_manager.cpp
   src/db_server.cpp
   src/exceptions.cpp
   src/gaia_ptr_server.cpp
   src/gaia_ptr.cpp
-  src/index_builder.cpp
   src/memory_manager.cpp
   src/server_contexts.cpp
   src/system_checks.cpp
   src/txn_metadata.cpp
-  src/type_id_mapping.cpp
 )
 
 add_library(gaia_db_server ${GAIA_DB_SERVER_SOURCES})
@@ -185,9 +133,6 @@ target_link_libraries(gaia_db_server
     Threads::Threads
     dl
     gaia_common
-    gaia_db_persistence
-    gaia_index
-    rocks_wrapper
 )
 
 add_executable(gaia_db_server_exec src/db_server_exec.cpp)
@@ -208,110 +153,9 @@ set(GAIA_DB_CORE_TEST_INCLUDES
   ${GAIA_DB_CORE_PRIVATE_INCLUDES}
 )
 
-###############################################
-# Python and PyBind11 wrapper for database.
-###############################################
-
-message(CHECK_START "Looking for Python3")
-find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
-if(Python3_FOUND)
-  list(APPEND CMAKE_MESSAGE_INDENT "  ")
-  message(VERBOSE "Python3_EXECUTABLE=${Python3_EXECUTABLE}")
-  message(VERBOSE "Python3_INCLUDE_DIRS=${Python3_INCLUDE_DIRS}")
-  list(POP_BACK CMAKE_MESSAGE_INDENT)
-  message(CHECK_PASS "found")
-else()
-  message(CHECK_FAIL "not found")
-endif()
-
-find_package(pybind11)
-
-if(Python3_FOUND AND pybind11_FOUND)
-  pybind11_add_module(gaia_db_pybind src/db_pybind_wrapper.cpp)
-  configure_gaia_target(gaia_db_pybind)
-  target_include_directories(gaia_db_pybind PRIVATE ${PROJECT_SOURCE_DIR})
-  target_include_directories(gaia_db_pybind PRIVATE
-    "${GAIA_DB_CORE_PUBLIC_INCLUDES}"
-    "${GAIA_DB_CORE_PRIVATE_INCLUDES}")
-  target_include_directories(gaia_db_pybind SYSTEM PRIVATE "${GEN_DIR}")
-  target_link_libraries(gaia_db_pybind PRIVATE pybind11::module rt gaia_system gaia_db_client)
-
-  # See https://github.com/pybind/pybind11/issues/1604 for inclusion of -fsized-deallocation for C++17
-  target_compile_options(gaia_db_pybind PRIVATE -Wno-deprecated-register -Wno-unused-parameter -fsized-deallocation)
-
-  if("$CACHE{SANITIZER}" STREQUAL "ASAN")
-    target_link_options(gaia_db_pybind PRIVATE "-shared-libasan")
-  endif()
-
-  # Python wrapper unit test.
-  # TODO: This test is disabled for Debug builds.  Need to investigate why we cannot
-  # find libclang_rt.asan-x86_64 in debug builds.
-  if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-    configure_file(tests/test_db.py . COPYONLY)
-    add_test(
-      NAME test_db_pybind
-      COMMAND
-        daemonize $<TARGET_FILE:gaia_db_server_exec> --persistence disabled &;
-        ${Python3_EXECUTABLE} test_db.py;
-        pkill -f -KILL gaia_db_server
-      )
-  endif()
-endif()
-
-###############################################
-# JNI wrapper for database.
-###############################################
-if(JAVA_FOUND AND JNI_FOUND)
-  # Configure build of native C++ wrapper library.
-  add_library(gaia_db_jni SHARED src/db_jni_wrapper.cpp)
-  configure_gaia_target(gaia_db_jni)
-  target_include_directories(gaia_db_jni PRIVATE ${PROJECT_SOURCE_DIR})
-  target_include_directories(gaia_db_jni PRIVATE ${PROJECT_BINARY_DIR})
-  target_include_directories(gaia_db_jni PRIVATE ${JNI_INCLUDE_DIRS})
-  target_include_directories(gaia_db_jni PRIVATE ${GAIA_DB_CORE_INCLUDES})
-  target_include_directories(gaia_db_jni PRIVATE ${GAIA_REPO}/production/db/inc/core)
-  target_link_libraries(gaia_db_jni PRIVATE rt gaia_system gaia_db_client db_jni_headers)
-  target_compile_options(gaia_db_jni PRIVATE -Wno-deprecated-register -Wno-unused-parameter)
-  if("$CACHE{SANITIZER}" STREQUAL "ASAN")
-    target_link_options(gaia_db_jni PRIVATE "-shared-libasan")
-  endif()
-endif()
-
-set(GAIA_DB_CATALOG_TEST_PRIVATE_INCLUDES
-  ${GAIA_INC}
-  ${GAIA_REPO}/production/schemas/repository/inc
-  ${GAIA_REPO}/production/db/inc/core
-)
-
-add_library(gaia_db_catalog_test tests/db_catalog_test_base.cpp)
-configure_gaia_target(gaia_db_catalog_test)
-target_include_directories(gaia_db_catalog_test PRIVATE ${GAIA_DB_CATALOG_TEST_PRIVATE_INCLUDES})
-target_link_libraries(gaia_db_catalog_test PRIVATE gaia_common gaia_db_client gaia_schema_loader gtest)
-
 add_gtest(test_type_index tests/test_type_index.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_common;gaia_db_client;${LIB_CAP};${LIB_EXPLAIN}")
 add_gtest(test_db_client tests/test_db_client.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
-add_gtest(test_db_caches tests/test_db_caches.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
 add_gtest(test_concurrent_db_client tests/test_concurrent_db_client.cpp "${GEN_DIR};${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
 add_gtest(test_gaia_ptr_api tests/test_gaia_ptr_api.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_common;gaia_db_client;gaia_direct;gaia_catalog")
 add_gtest(test_env_instance_name tests/test_db_server_env.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_common;gaia_db_client;gaia_direct")
 add_gtest(test_sessions tests/test_sessions.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
-
-add_gtest(test_multiple_server_instances
-    tests/test_multiple_server_instances.cpp
-    "${GEN_DIR};${GAIA_DB_CORE_TEST_INCLUDES}"
-    "gaia_common;gaia_db_client;gaia_direct;gaia_schema_loader;rt;dac_addr_book")
-
-add_gtest(test_relationships
-  tests/test_relationships.cpp
-  "${GAIA_DB_CORE_TEST_INCLUDES};${GAIA_INC};${FLATBUFFERS_INC}"
-  "gaia_common;gaia_db_client;gaia_catalog")
-
-add_gtest(test_catalog_core
-  tests/test_catalog_core.cpp
-  "${FLATBUFFERS_INC};${GAIA_DB_CORE_TEST_INCLUDES};${GAIA_INC}"
-  "gaia_common;gaia_db_client;gaia_catalog")
-
-add_gtest(test_optional_scalars
-  "tests/test_optional_scalars.cpp"
-  "${GAIA_DB_CORE_TEST_INCLUDES};"
-  "rt;gaia_system;gaia_db_catalog_test")

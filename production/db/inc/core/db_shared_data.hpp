@@ -11,7 +11,6 @@
 #include "gaia_internal/db/db_types.hpp"
 
 #include "chunk_manager.hpp"
-#include "db_caches.hpp"
 #include "db_internal_types.hpp"
 #include "mapped_data.hpp"
 #include "memory_manager.hpp"

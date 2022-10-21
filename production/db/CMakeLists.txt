@@ -14,7 +14,3 @@ message(VERBOSE "GAIA_DB_INC=${GAIA_DB_INC}")
 
 # Add individual component folders.
 add_subdirectory(core)
-add_subdirectory(payload_types)
-add_subdirectory(index)
-add_subdirectory(triggers)
-add_subdirectory(query_processor)

@@ -17,18 +17,7 @@ enable_testing()
 
 project(production VERSION 0.6.0)
 
-# Sets the pre-release version which will be appended to the
-# product version: 0.1.0-alpha.
-# When the product is GA this should be empty.
-set(PRE_RELEASE_IDENTIFIER "beta")
-
-option(EXECUTE_FDW_TESTS "Execute FDW tests" OFF)
-
 option(ENABLE_STACKTRACE "Enable stack traces" ON)
-
-option(BUILD_GAIA_SDK "Build Gaia SDK packages and binaries" OFF)
-
-option(ENABLE_SDK_TESTS "Build and execute ruleset translation tests" ON)
 
 option(EXPORT_SYMBOLS "Export symbols by default from shared libraries" OFF)
 
@@ -117,31 +106,6 @@ target_compile_definitions(gaia_build_options INTERFACE $<$<CONFIG:Debug>:DEBUG>
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>:DISABLE_ASSERTS>)
 # Disabling asserts will produce bogus unused variable warnings.
 target_compile_options(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>:-Wno-unused-parameter -Wno-unused-lambda-capture -Wno-unused-variable -Wno-unused-but-set-variable>)
-
-# LLVM and CLANG specific options.
-if(BUILD_GAIA_SDK OR BUILD_GAIA_LLVM_TESTS)
-  set(LLVM_ENABLE_WARNINGS OFF CACHE BOOL "")
-  set(CLANG_BUILD_TOOLS OFF CACHE BOOL "")
-  set(LLVM_BUILD_TOOLS OFF CACHE BOOL "")
-  set(LLVM_ENABLE_EH ON CACHE BOOL "")
-  set(LLVM_ENABLE_PROJECTS "clang" CACHE STRING "")
-  set(LLVM_ENABLE_RTTI ON CACHE BOOL "")
-  # LLD should make building LLVM significantly faster.
-  set(LLVM_ENABLE_LLD ON CACHE BOOL "")
-
-  if(ENABLE_STACKTRACE)
-    set(LLVM_GENERATE_STACKTRACE_DEBUG_INFO ON CACHE BOOL "")
-  endif()
-
-  if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
-    # This speeds up linking by separating debug info.
-    set(LLVM_USE_SPLIT_DWARF ON CACHE BOOL "")
-    # This makes debugger startup faster.
-    set(LLVM_USE_GDB_INDEX ON CACHE BOOL "")
-    # This saves the linker some work, but makes clang slower.
-    set(BUILD_SHARED_LIBS:BOOL ON CACHE BOOL "")
-  endif()
-endif()
 
 # Debug build-specific options.
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
@@ -239,25 +203,10 @@ set(FLATBUFFERS_INC "${FLATBUFFERS_ROOT}/include")
 set(FLATBUFFERS_BIN "${FLATBUFFERS_ROOT}/bin")
 set(FLATBUFFERS_LIB "${FLATBUFFERS_ROOT}/lib")
 
-set(GAIA_SPDLOG "${DEPENDENCIES_INSTALL_PREFIX}/gaia_spdlog")
-set(GAIA_SPDLOG_INC "${GAIA_SPDLOG}/include")
-
-set(JSON_INC "${GAIA_REPO}/third_party/production/json")
-
-set(ROCKSDB "${GAIA_REPO}/third_party/production/rocksdb")
-set(ROCKSDB_INC "${ROCKSDB}/include")
-set(ROCKSDB_UTIL "${ROCKSDB}/util")
-
-set(GREMLIN_CONSOLE_PATH "/usr/local/share/gremlin-console")
-set(GREMLIN_SERVER_PATH "/usr/local/share/gremlin-server")
-
 set(GAIA_PROD_BUILD "${CMAKE_CURRENT_BINARY_DIR}")
 
 set(GAIA_PARSER_GENERATED "${GAIA_PROD_BUILD}/catalog/parser/generated")
 set(GAIA_GENERATED_CODE "${GAIA_PROD_BUILD}/gaia_generated")
-
-set(GAIA_CONFIG "${PROJECT_SOURCE_DIR}/gaia.conf")
-set(GAIA_LOG_CONFIG "${PROJECT_SOURCE_DIR}/gaia_log.conf")
 
 # We need pthreads support.
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
@@ -302,19 +251,6 @@ add_executable(flatc IMPORTED)
 set_target_properties(flatc PROPERTIES IMPORTED_LOCATION ${FLATBUFFERS_BIN}/flatc)
 add_dependencies(flatc flatbuffers_dependency)
 
-# Rocksdb.
-set(DISABLE_WARNINGS ON CACHE BOOL "" FORCE)
-add_subdirectory(${ROCKSDB} rocksdb EXCLUDE_FROM_ALL)
-
-# Cpptoml.
-add_subdirectory("${GAIA_REPO}/third_party/production/cpptoml" cpptoml)
-# Spdlog.
-add_subdirectory("${GAIA_REPO}/third_party/production/gaia_spdlog" gaia_spdlog)
-# Spdlog_setup.
-add_subdirectory("${GAIA_REPO}/third_party/production/gaia_spdlog_setup" gaia_spdlog_setup)
-# Tabulate.
-add_subdirectory("${GAIA_REPO}/third_party/production/tabulate" tabulate)
-# Googletest.
 add_subdirectory(${GOOGLE_TEST} googletest EXCLUDE_FROM_ALL)
 
 # Setting clang-tidy here to avoid it being applied to flatbuffers, rocksdb etc...
@@ -330,59 +266,12 @@ endif()
 # Core database engine.
 add_subdirectory(common)
 add_subdirectory(db)
-add_subdirectory(system)
-
-# Direct access API.
-add_subdirectory(direct_access)
-
-# Catalog.
-add_subdirectory(catalog)
-
-# Rules engine.
-add_subdirectory(rules)
-add_subdirectory(schemas)
 
 # Tools.
 add_subdirectory(tools)
 
-# Examples
-add_subdirectory(examples)
-
-# Benchmarks
-add_subdirectory(benchmarks)
-
-if(BUILD_GAIA_SDK)
-  unset(CMAKE_CXX_CLANG_TIDY)
-  add_subdirectory("${GAIA_REPO}/third_party/production/TranslationEngineLLVM/llvm" llvm EXCLUDE_FROM_ALL)
-  if(ENABLE_CLANG_TIDY)
-    set(CMAKE_CXX_CLANG_TIDY clang-tidy)
-  endif()
-endif()
-
-# Query processors.
-# We want to export all global symbols from the FDW shared library.
-set(EXPORT_SYMBOLS ON)
-add_subdirectory(fdw)
-set(EXPORT_SYMBOLS OFF)
-
-# SDK
-# Be sure to add the SDK directory after the sql directory because the package mechanism
-# requires that we know whether the gaia_fdw target will be added or not. If it is added
-# then we can add gaia_fdw to the list of dependencies for the package.
-add_subdirectory(sdk)
-
-# Java Tinkerpop bindings
-add_subdirectory(java)
-
 # Handle Gaia versioning.
 include(cmake/gaia_version.cmake)
-
-# Copy log configuration file to make it visible during
-# common/ tests (currently not in use). Leaving this for reference
-file(
-  COPY ${CMAKE_CURRENT_SOURCE_DIR}/gaia_log.conf
-  DESTINATION ${PROJECT_BINARY_DIR}/common/
-)
 
 # We want to disable all clang-tidy checks for generated code.
 # However, if no checks are specified, clang-tidy will assume we

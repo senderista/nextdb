@@ -22,8 +22,6 @@
 
 #include "gaia_internal/common/generator_iterator.hpp"
 
-#include "db_caches.hpp"
-#include "persistent_store_manager.hpp"
 #include "server_contexts.hpp"
 #include "txn_metadata.hpp"
 #include "type_index.hpp"

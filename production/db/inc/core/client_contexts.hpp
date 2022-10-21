@@ -11,12 +11,9 @@
 #include <memory>
 #include <vector>
 
-#include "gaia_internal/db/db_client_config.hpp"
 #include "gaia_internal/db/db_types.hpp"
-#include "gaia_internal/db/triggers.hpp"
 
 #include "chunk_manager.hpp"
-#include "db_caches.hpp"
 #include "db_internal_types.hpp"
 #include "mapped_data.hpp"
 #include "memory_manager.hpp"
@@ -31,13 +28,6 @@ struct client_transaction_context_t
 {
     gaia_txn_id_t txn_id;
     log_offset_t txn_log_offset;
-
-    gaia::db::index::indexes_t local_indexes;
-
-    // A log processing watermark that is used for index maintenance.
-    size_t last_index_processed_log_count{0};
-
-    std::vector<gaia::db::triggers::trigger_event_t> events;
 
 public:
     inline ~client_transaction_context_t();
@@ -55,10 +45,6 @@ struct client_session_context_t
     memory_manager::memory_manager_t memory_manager;
     memory_manager::chunk_manager_t chunk_manager;
 
-    // Database caches are initialized for each session
-    // during the first transaction of the session.
-    std::shared_ptr<caches::db_caches_t> db_caches;
-
     int fd_locators{-1};
     int session_socket{-1};
 
@@ -71,7 +57,6 @@ struct client_session_context_t
     mapped_data_t<data_t> shared_data;
     mapped_data_t<logs_t> shared_logs;
     mapped_data_t<id_index_t> shared_id_index;
-    mapped_data_t<type_index_t> shared_type_index;
 
     // The list of data mappings that we manage together.
     // The order of declarations must be the order of data_mapping_t::index_t values!

@@ -60,7 +60,6 @@ public:
     static gaia_ptr_t create(
         common::gaia_id_t id,
         common::gaia_type_t type,
-        common::reference_offset_t num_refs,
         size_t data_size,
         const void* data);
 
@@ -68,18 +67,12 @@ public:
     // 'gaia_ptr::update_payload(...)' in user facing code path.
     void update_payload(size_t data_size, const void* data);
 
-    static gaia_ptr_t find_first(common::gaia_type_t type);
-    gaia_ptr_t find_next() const;
-
     inline bool is_null() const;
-    inline bool is_ref_anchor() const;
 
     inline common::gaia_id_t id() const;
     inline common::gaia_type_t type() const;
     inline char* data() const;
     inline size_t data_size() const;
-    inline common::gaia_id_t* references() const;
-    inline common::reference_offset_t references_count() const;
 
     db_object_t* to_ptr() const;
     gaia_offset_t to_offset() const;
@@ -97,18 +90,6 @@ public:
         common::gaia_type_t type);
 
     void reset();
-
-    gaia_ptr_t set_reference(common::reference_offset_t offset, common::gaia_id_t id);
-
-    gaia_ptr_t set_references(
-        common::reference_offset_t offset1, common::gaia_id_t id1,
-        common::reference_offset_t offset2, common::gaia_id_t id2,
-        common::reference_offset_t offset3 = common::c_invalid_reference_offset,
-        common::gaia_id_t id3 = common::c_invalid_gaia_id);
-
-    static gaia_ptr_t create_ref_anchor(
-        common::gaia_id_t parent_id,
-        common::gaia_id_t first_child_id);
 
 protected:
     void allocate(size_t size);

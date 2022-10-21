@@ -286,15 +286,6 @@ void client_t::begin_transaction()
         apply_log_from_offset(private_locators().data(), txn_log_info->log_offset());
     }
 
-    // We need to perform this initialization in the context of a transaction,
-    // so we'll just piggyback on the first transaction started by the client
-    // under a regular session.
-    if (session_options().session_type == session_type_t::regular
-        && !s_session_context->db_caches)
-    {
-        s_session_context->db_caches.reset(init_db_caches());
-    }
-
     cleanup_private_locators.dismiss();
     cleanup_txn_context.dismiss();
 }
@@ -377,14 +368,6 @@ void client_t::commit_transaction()
             txn_info->transaction_id() == txn_id(), "Unexpected transaction id!");
     }
 
-    // Execute trigger only if rules engine is initialized.
-    if (s_txn_commit_trigger
-        && event == session_event_t::DECIDE_TXN_COMMIT
-        && events().size() > 0)
-    {
-        s_txn_commit_trigger(events());
-    }
-
     // Throw an exception on server-side abort.
     // REVIEW: We could include the gaia_ids of conflicting objects in
     // transaction_update_conflict_internal
@@ -413,42 +396,4 @@ void client_t::init_memory_manager()
     s_session_context->memory_manager.load(
         reinterpret_cast<uint8_t*>(shared_data().data()->objects),
         sizeof(shared_data().data()->objects));
-}
-
-caches::db_caches_t* client_t::init_db_caches()
-{
-    caches::db_caches_t* db_caches_ptr = new caches::db_caches_t();
-
-    auto cleanup_db_caches = make_scope_guard([&db_caches_ptr] {
-        delete db_caches_ptr;
-        db_caches_ptr = nullptr;
-    });
-
-    // Initialize table_relationship_fields_cache_t.
-    for (const auto& table : catalog_core::list_tables())
-    {
-        gaia_id_t table_id = table.id();
-        db_caches_ptr->table_relationship_fields_cache.put(table_id);
-
-        for (const auto& relationship : catalog_core::list_relationship_from(table_id))
-        {
-            if (relationship.parent_field_positions()->size() == 1)
-            {
-                field_position_t field = relationship.parent_field_positions()->Get(0);
-                db_caches_ptr->table_relationship_fields_cache.put_parent_relationship_field(table_id, field);
-            }
-        }
-
-        for (const auto& relationship : catalog_core::list_relationship_to(table_id))
-        {
-            if (relationship.child_field_positions()->size() == 1)
-            {
-                field_position_t field = relationship.child_field_positions()->Get(0);
-                db_caches_ptr->table_relationship_fields_cache.put_child_relationship_field(table_id, field);
-            }
-        }
-    }
-
-    cleanup_db_caches.dismiss();
-    return db_caches_ptr;
 }

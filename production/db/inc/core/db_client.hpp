@@ -20,7 +20,6 @@
 #include "gaia_internal/common/debug_assert.hpp"
 #include "gaia_internal/common/generator_iterator.hpp"
 #include "gaia_internal/common/mmap_helpers.hpp"
-#include "gaia_internal/common/system_table_types.hpp"
 #include "gaia_internal/db/gaia_ptr.hpp"
 #include "gaia_internal/exceptions.hpp"
 
@@ -32,11 +31,6 @@ namespace gaia
 {
 namespace db
 {
-
-namespace query_processor
-{
-class db_client_proxy_t;
-} // namespace query_processor
 
 // For declarations of friend functions.
 #include "db_shared_data_interface.inc"
@@ -57,21 +51,13 @@ class client_t
     friend gaia::db::logs_t* gaia::db::get_logs();
     friend gaia::db::id_index_t* gaia::db::get_id_index();
     friend gaia::db::type_index_t* gaia::db::get_type_index();
-    friend gaia::db::index::indexes_t* gaia::db::get_indexes();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
     friend gaia::db::gaia_txn_id_t gaia::db::get_txn_id();
-    friend const gaia::db::caches::db_caches_t* gaia::db::get_db_caches();
-
-    friend class gaia::db::query_processor::db_client_proxy_t;
 
 public:
     // These functions are exported from gaia_internal/db/db.hpp.
     static inline gaia_txn_id_t get_current_txn_id();
-    static inline void set_commit_trigger(triggers::commit_trigger_fn trigger_fn);
-    static inline bool has_commit_trigger();
-    static inline bool is_ping_session_open();
-    static inline bool is_ddl_session_open();
 
     // These functions are exported from and documented in gaia/db/db.hpp.
     static inline bool is_session_open();
@@ -113,9 +99,7 @@ private:
     // Context getters.
     static inline gaia_txn_id_t txn_id();
     static inline log_offset_t txn_log_offset();
-    static inline std::vector<gaia::db::triggers::trigger_event_t>& events();
 
-    static inline config::session_options_t& session_options();
     static inline int session_socket();
     static inline mapped_data_t<locators_t>& private_locators();
     static inline mapped_data_t<data_t>& shared_data();
@@ -126,13 +110,8 @@ private:
     // and that would add overhead to the TLS implementation.
     thread_local static inline client_session_context_t* s_session_context{nullptr};
 
-    // This is a callback set by the rules engine.
-    static inline triggers::commit_trigger_fn s_txn_commit_trigger = nullptr;
-
 private:
     static void init_memory_manager();
-
-    static gaia::db::caches::db_caches_t* init_db_caches();
 
     static void txn_cleanup();
 

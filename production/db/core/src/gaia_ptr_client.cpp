@@ -68,6 +68,13 @@ void gaia_ptr_t::finalize_update(gaia_offset_t old_offset)
     log_txn_operation(m_locator, old_offset, to_offset());
 }
 
+gaia_ptr_t gaia_ptr_t::create(gaia_id_t id, gaia_type_t type, size_t data_size, const void* data)
+{
+    gaia_ptr_t obj = create_no_txn(id, type, data_size, data);
+    obj.finalize_create();
+    return obj;
+}
+
 void gaia_ptr_t::update_payload(size_t data_size, const void* data)
 {
     gaia_offset_t old_offset = to_offset();

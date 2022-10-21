@@ -37,6 +37,21 @@ const T_output* generator_iterator_t<T_output>::operator->() const
 }
 
 template <typename T_output>
+T_output& generator_iterator_t<T_output>::operator*()
+{
+    // If we de-reference m_state via *m_state, we can run into undefined behavior
+    // if m_state does not contain a value, so we'll use the value() method instead,
+    // which throws an exception in that case.
+    return m_state.value();
+}
+
+template <typename T_output>
+T_output* generator_iterator_t<T_output>::operator->()
+{
+    return m_state ? &m_state.value() : nullptr;
+}
+
+template <typename T_output>
 generator_iterator_t<T_output>& generator_iterator_t<T_output>::operator++()
 {
     while ((m_state = (*m_generator)()))

@@ -293,8 +293,3 @@ add_custom_target(gaia_dependency_graph
   COMMAND rm -f ${CMAKE_CURRENT_BINARY_DIR}/gaia_dependencies/*
   COMMAND "${CMAKE_COMMAND}" "--graphviz=gaia_dependencies/gaia" .
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
-
-# Customize test commands.
-file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/CTestCustom.cmake"
-CONTENT "set(CTEST_CUSTOM_PRE_TEST \"daemonize $<TARGET_FILE:gaia_db_server> --disable-persistence\")\nset(CTEST_CUSTOM_POST_TEST \"pkill -f -KILL gaia_db_server\")\n"
-)

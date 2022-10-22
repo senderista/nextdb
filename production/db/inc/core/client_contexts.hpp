@@ -32,7 +32,8 @@ struct client_transaction_context_t
 public:
     inline ~client_transaction_context_t();
 
-    void clear();
+    inline void clear();
+    inline bool initialized();
 };
 
 struct client_session_context_t

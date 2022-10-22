@@ -49,7 +49,7 @@ void client_t::txn_cleanup()
 {
     // Ensure the cleaning of the txn context.
     auto cleanup_txn_context = make_scope_guard([&] {
-        s_session_context->txn_context.reset();
+        s_session_context->txn_context->clear();
     });
 
     // Destroy the locator mapping.
@@ -222,20 +222,21 @@ void client_t::begin_transaction()
         "Session context should be initialized already at the start of a new transaction!");
 
     ASSERT_PRECONDITION(
-        !(s_session_context->txn_context),
+        s_session_context->txn_context,
+        "Transaction context should be allocated already at the start of a new transaction!");
+
+    ASSERT_PRECONDITION(
+        !(s_session_context->txn_context->initialized()),
         "Transaction context should not be initialized already at the start of a new transaction!");
 
-    s_session_context->txn_context = std::make_shared<client_transaction_context_t>();
-    auto cleanup_txn_context = make_scope_guard([&] {
-        s_session_context->txn_context.reset();
-    });
+    // Clean up all transaction-local session state.
+    auto cleanup = make_scope_guard(txn_cleanup);
 
     // Map a private COW view of the locator shared memory segment.
     ASSERT_PRECONDITION(!private_locators().is_set(), "Locators segment is already mapped!");
     bool manage_fd = false;
     bool is_shared = false;
     private_locators().open(s_session_context->fd_locators, manage_fd, is_shared);
-    auto cleanup_private_locators = make_scope_guard([&] { private_locators().close(); });
 
     // Send a TXN_BEGIN request to the server and receive a new txn ID, the
     // offset of a new txn log, and txn log offsets for all committed txns
@@ -266,13 +267,16 @@ void client_t::begin_transaction()
         apply_log_from_offset(private_locators().data(), txn_log_info->log_offset());
     }
 
-    cleanup_private_locators.dismiss();
-    cleanup_txn_context.dismiss();
+    cleanup.dismiss();
 }
 
 void client_t::rollback_transaction()
 {
     verify_txn_active();
+
+    ASSERT_PRECONDITION(
+        s_session_context->txn_context->initialized(),
+        "Transaction context should be initialized already at the end of a transaction!");
 
     // Clean up all transaction-local session state.
     auto cleanup = make_scope_guard(txn_cleanup);
@@ -288,6 +292,10 @@ void client_t::rollback_transaction()
 void client_t::commit_transaction()
 {
     verify_txn_active();
+
+    ASSERT_PRECONDITION(
+        s_session_context->txn_context->initialized(),
+        "Transaction context should be initialized already at the end of a transaction!");
 
     // This optimization to treat committing a read-only txn as a rollback
     // allows us to avoid any special cases in the server for empty txn logs.

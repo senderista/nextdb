@@ -65,8 +65,8 @@ protected:
         else
         {
             // We're in the parent, so wait a bit for the DB to start accepting connections.
-            // 100ms seems to work well.
-            constexpr useconds_t c_wait_usecs = 100 * 1000;
+            // 20ms seems to work well.
+            constexpr useconds_t c_wait_usecs = 20 * 1000;
             if (-1 == ::usleep(c_wait_usecs))
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)

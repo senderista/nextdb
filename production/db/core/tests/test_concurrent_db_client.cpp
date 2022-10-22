@@ -23,6 +23,7 @@
 #include "gaia_internal/db/gaia_ptr.hpp"
 
 #include "db_helpers.hpp"
+#include "db_test_base.hpp"
 
 using namespace gaia::db;
 using namespace gaia::common;
@@ -65,12 +66,7 @@ private:
     size_t m_count{0};
 };
 
-/**
- * Google test fixture object.  This class is used by each
- * test case below.  SetUp() is called before each test is run
- * and TearDown() is called after each test case is done.
- */
-class db__core__concurrent_db_client__test : public ::testing::Test
+class db__core__concurrent_db_client__test : public db_test_base_t
 {
 protected:
     static constexpr char c_even_value[] = "ping";

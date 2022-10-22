@@ -13,6 +13,8 @@
 
 #include "gaia_internal/db/gaia_ptr.hpp"
 
+#include "db_test_base.hpp"
+
 using namespace gaia::db;
 using namespace gaia::common;
 
@@ -79,7 +81,7 @@ void print_node(const gaia_ptr_t& node, bool indent = false)
  * test case below.  SetUp() is called before each test is run
  * and TearDown() is called after each test case is done.
  */
-class db__core__db_client__test : public ::testing::Test
+class db__core__db_client__test : public db_test_base_t
 {
 private:
     void init_data()
@@ -118,6 +120,8 @@ protected:
 
     void SetUp() override
     {
+        db_test_base_t::SetUp();
+
         begin_session();
         init_data();
     }
@@ -125,6 +129,8 @@ protected:
     void TearDown() override
     {
         end_session();
+
+        db_test_base_t::TearDown();
     }
 };
 
@@ -385,35 +391,35 @@ TEST_F(db__core__db_client__test, iterate_type_cursor_same_txn)
     commit_transaction();
 }
 
-TEST_F(db__core__db_client__test, iterate_type_delete)
-{
-    begin_transaction();
-    {
-        std::cerr << std::endl;
-        std::cerr << "*** Iterating over nodes of type 1 before delete:" << std::endl;
-        auto node_iter = gaia_ptr_t::find_all_iterator(type1);
-        print_node(*node_iter);
-        EXPECT_EQ(node_iter->id(), node1_id);
-        std::cerr << std::endl;
-        std::cerr << "*** Preparing to delete first node of type 1:" << std::endl;
-        node_iter->reset();
-        std::cerr << "*** Iterating over nodes of type 1 after delete:" << std::endl;
-        node_iter = gaia_ptr_t::find_all_iterator(type1);
-        print_node(*node_iter);
-        EXPECT_EQ(node_iter->id(), node2_id);
-    }
-    commit_transaction();
+// TEST_F(db__core__db_client__test, iterate_type_delete)
+// {
+//     begin_transaction();
+//     {
+//         std::cerr << std::endl;
+//         std::cerr << "*** Iterating over nodes of type 1 before delete:" << std::endl;
+//         auto node_iter = gaia_ptr_t::find_all_iterator(type1);
+//         print_node(*node_iter);
+//         EXPECT_EQ(node_iter->id(), node1_id);
+//         std::cerr << std::endl;
+//         std::cerr << "*** Preparing to delete first node of type 1:" << std::endl;
+//         node_iter->reset();
+//         std::cerr << "*** Iterating over nodes of type 1 after delete:" << std::endl;
+//         node_iter = gaia_ptr_t::find_all_iterator(type1);
+//         print_node(*node_iter);
+//         EXPECT_EQ(node_iter->id(), node2_id);
+//     }
+//     commit_transaction();
 
-    begin_transaction();
-    {
-        std::cerr << std::endl;
-        std::cerr << "*** Reloading data: iterating over nodes of type 1 after delete:" << std::endl;
-        auto node_iter = gaia_ptr_t::find_all_iterator(type1);
-        print_node(*node_iter);
-        EXPECT_EQ(node_iter->id(), node2_id);
-    }
-    commit_transaction();
-}
+//     begin_transaction();
+//     {
+//         std::cerr << std::endl;
+//         std::cerr << "*** Reloading data: iterating over nodes of type 1 after delete:" << std::endl;
+//         auto node_iter = gaia_ptr_t::find_all_iterator(type1);
+//         print_node(*node_iter);
+//         EXPECT_EQ(node_iter->id(), node2_id);
+//     }
+//     commit_transaction();
+// }
 
 TEST_F(db__core__db_client__test, null_payload_check)
 {

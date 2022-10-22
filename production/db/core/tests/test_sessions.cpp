@@ -13,13 +13,15 @@
 #include "gaia/db/db.hpp"
 #include "gaia/exceptions.hpp"
 
+#include "db_test_base.hpp"
+
 using namespace std;
 using namespace gaia::db;
 using namespace gaia::common;
 
 static constexpr int64_t c_session_sleep_millis = 10;
 
-class session_test : public ::testing::Test
+class session_test : public db_test_base_t
 {
 };
 

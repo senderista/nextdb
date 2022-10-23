@@ -42,7 +42,7 @@ protected:
         }
         else if (m_server_pid == 0)
         {
-            // Kills the child process (gaia_db_sever) after the parent dies (current process).
+            // Kills the child process (gaia_db_server) after the parent dies (current process).
             // This must be put right after ::fork() and before ::execve().
             // This works well with ctest where each test is run as a separated process.
             if (-1 == ::prctl(PR_SET_PDEATHSIG, SIGKILL))
@@ -65,8 +65,8 @@ protected:
         else
         {
             // We're in the parent, so wait a bit for the DB to start accepting connections.
-            // 20ms seems to work well.
-            constexpr useconds_t c_wait_usecs = 20 * 1000;
+            // 50ms seems to work well.
+            constexpr useconds_t c_wait_usecs = 50 * 1000;
             if (-1 == ::usleep(c_wait_usecs))
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)

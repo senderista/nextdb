@@ -2321,8 +2321,18 @@ bool server_t::txn_commit()
     // allowing the pre-truncate watermark to advance past our begin_ts into the
     // conflict window. This ensures that any thread (including recursive
     // validators) can safely read any txn metadata within the conflict window
-    // of this txn, until the commit decision is returned to the client.
-    // NB: This MUST be done before obtaining a commit_ts!
+    // of this txn, until the commit decision is returned to the client. NB:
+    // This MUST be done before acquiring a commit_ts!
+    //
+    // We do not catch safe_ts_failure here because it should be impossible for
+    // the post-GC watermark to advance past an active begin_ts (our begin_ts is
+    // not marked SUBMITTED until we acquire a commit_ts). If a safe_ts_failure
+    // exception is thrown here, that indicates a bug.
+    //
+    // BUGBUG: We have observed a safe_ts_failure exception thrown here! This is
+    // a critical correctness issue: it indicates either a bug in the
+    // implementation or in the algorithm itself. It is imperative to specify
+    // and model-check the safe txn metadata truncation algorithm!
     safe_ts_t safe_begin_ts(txn_id());
 
     // Register the committing txn under a new commit timestamp.

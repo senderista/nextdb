@@ -145,6 +145,7 @@ private:
     static inline mapped_data_t<logs_t> s_shared_logs{};
     static inline mapped_data_t<id_index_t> s_shared_id_index{};
     static inline mapped_data_t<type_index_t> s_shared_type_index{};
+    static inline mapped_data_t<transactions::txn_metadata_t> s_shared_txn_metadata{};
 
     // The allocated status of each log offset is tracked in this bitmap. When
     // opening a new txn, each session thread must allocate an offset for its txn
@@ -332,6 +333,7 @@ private:
         {data_mapping_t::index_t::logs, &s_shared_logs, c_gaia_mem_logs_prefix},
         {data_mapping_t::index_t::id_index, &s_shared_id_index, c_gaia_mem_id_index_prefix},
         {data_mapping_t::index_t::type_index, &s_shared_type_index, c_gaia_mem_type_index_prefix},
+        {data_mapping_t::index_t::txn_metadata, &s_shared_txn_metadata, c_gaia_mem_txn_metadata_prefix},
     };
 
     // Function pointer type that executes side effects of a session state transition.

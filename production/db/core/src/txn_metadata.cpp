@@ -107,7 +107,7 @@ void txn_metadata_t::init_txn_metadata_map()
         s_txn_metadata_map,
         c_size_in_bytes,
         PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+        MAP_SHARED | MAP_ANONYMOUS | MAP_NORESERVE,
         -1,
         0);
 }

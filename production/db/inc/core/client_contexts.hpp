@@ -17,6 +17,7 @@
 #include "db_internal_types.hpp"
 #include "mapped_data.hpp"
 #include "memory_manager.hpp"
+#include "txn_metadata.hpp"
 #include "type_index.hpp"
 
 namespace gaia
@@ -57,6 +58,7 @@ struct client_session_context_t
     mapped_data_t<logs_t> shared_logs;
     mapped_data_t<id_index_t> shared_id_index;
     mapped_data_t<type_index_t> shared_type_index;
+    mapped_data_t<transactions::txn_metadata_t> shared_txn_metadata;
 
     // The list of data mappings that we manage together.
     // The order of declarations must be the order of data_mapping_t::index_t values!

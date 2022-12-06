@@ -26,6 +26,9 @@ static inline gaia::db::id_index_t* get_id_index();
 // Returns a pointer to a mapping of the "type_index" shared memory segment.
 static inline gaia::db::type_index_t* get_type_index();
 
+// Returns a pointer to a mapping of the "txn_metadata" shared memory segment.
+static inline gaia::db::transactions::txn_metadata_t* get_txn_metadata();
+
 // Gets the memory manager instance for the current thread or process.
 static inline gaia::db::memory_manager::memory_manager_t* get_memory_manager();
 

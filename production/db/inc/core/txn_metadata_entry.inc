@@ -23,7 +23,7 @@ uint64_t txn_metadata_entry_t::get_word()
 
 void txn_metadata_entry_t::check_ts_size(gaia_txn_id_t ts)
 {
-    ASSERT_PRECONDITION(
+    DEBUG_ASSERT_PRECONDITION(
         ts < (1UL << c_txn_ts_bit_width),
         "Timestamp values must fit in 42 bits!");
 }
@@ -83,49 +83,58 @@ bool txn_metadata_entry_t::is_commit_ts_entry()
 
 bool txn_metadata_entry_t::is_submitted()
 {
+    ASSERT_PRECONDITION(is_begin_ts_entry(), "Not a begin timestamp!");
     return (get_status() == c_txn_status_submitted);
 }
 
 bool txn_metadata_entry_t::is_validating()
 {
+    ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     return (get_status() == c_txn_status_validating);
 }
 
 bool txn_metadata_entry_t::is_decided()
 {
+    ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     constexpr uint64_t c_decided_mask = c_txn_status_decided << c_txn_status_flags_shift;
     return ((m_word & c_decided_mask) == c_decided_mask);
 }
 
 bool txn_metadata_entry_t::is_committed()
 {
+    ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     return (get_status() == c_txn_status_committed);
 }
 
 bool txn_metadata_entry_t::is_aborted()
 {
+    ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     return (get_status() == c_txn_status_aborted);
 }
 
 bool txn_metadata_entry_t::is_gc_complete()
 {
+    ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     uint64_t gc_flags = (m_word & c_txn_gc_flags_mask) >> c_txn_gc_flags_shift;
     return (gc_flags == c_txn_gc_complete);
 }
 
 bool txn_metadata_entry_t::is_durable()
 {
+    ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     uint64_t persistence_flags = (m_word & c_txn_persistence_flags_mask) >> c_txn_persistence_flags_shift;
     return (persistence_flags == c_txn_persistence_complete);
 }
 
 bool txn_metadata_entry_t::is_active()
 {
+    ASSERT_PRECONDITION(is_begin_ts_entry(), "Not a begin timestamp!");
     return (get_status() == c_txn_status_active);
 }
 
 bool txn_metadata_entry_t::is_terminated()
 {
+    ASSERT_PRECONDITION(is_begin_ts_entry(), "Not a begin timestamp!");
     return (get_status() == c_txn_status_terminated);
 }
 

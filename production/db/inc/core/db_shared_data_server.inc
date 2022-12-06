@@ -62,6 +62,15 @@ static gaia::db::type_index_t* get_type_index()
     return gaia::db::server_t::s_shared_type_index.data();
 }
 
+static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
+{
+    // Since we don't use this accessor in the server itself, we can assert that
+    // it is always non-null (since callers should never be able to see it in
+    // its null state, i.e., with the txn_metadata segment unmapped).
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_txn_metadata.is_set(), "Server txn_metadata segment is unmapped!");
+    return gaia::db::server_t::s_shared_txn_metadata.data();
+}
+
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()
 {
     return &gaia::db::server_t::s_session_context->memory_manager;

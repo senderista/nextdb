@@ -25,6 +25,7 @@
 #include "server_contexts.hpp"
 #include "txn_metadata.hpp"
 #include "type_index.hpp"
+#include "watermarks.hpp"
 
 namespace gaia
 {
@@ -163,52 +164,10 @@ private:
     // reasonable time.
     static inline std::atomic<size_t> s_next_unused_log_offset{1};
 
-    // These global timestamp variables are "watermarks" that represent the
-    // progress of various system functions with respect to transaction history.
-    // The "pre-apply" watermark represents an upper bound on the latest
-    // commit_ts whose txn log could have been applied to the shared locator
-    // view. A committed txn cannot have its txn log applied to the shared view
-    // until the pre-apply watermark has been advanced to its commit_ts. The
-    // "post-apply" watermark represents a lower bound on the same quantity, and
-    // also an upper bound on the latest commit_ts whose txn log could be
-    // eligible for GC. GC cannot be started for any committed txn until the
-    // post-apply watermark has advanced to its commit_ts. The "post-GC"
-    // watermark represents a lower bound on the latest commit_ts whose txn log
-    // could have had GC reclaim all its resources. Finally, the "pre-truncate"
-    // watermark represents an (exclusive) upper bound on the timestamps whose
-    // metadata entries could have had their memory reclaimed (e.g., via
-    // zeroing, unmapping, or overwriting). Any timestamp whose metadata entry
-    // could potentially be dereferenced must be "reserved" via the "safe_ts"
-    // API to prevent the pre-truncate watermark from advancing past it and
-    // allowing its metadata entry to be reclaimed.
-    //
-    // The pre-apply watermark must either be equal to the post-apply watermark or greater by 1.
-    //
-    // Schematically:
-    //    commit timestamps of transactions whose metadata entries have been reclaimed
-    //  < pre-truncate watermark
-    //    <= commit timestamps of transactions completely garbage-collected
-    // <= post-GC watermark
-    //    <= commit timestamps of transactions applied to shared view
-    // <= post-apply watermark
-    //    < commit timestamp of transaction partially applied to shared view
-    // <= pre-apply watermark
-    //    < commit timestamps of transactions not applied to shared view.
-
-    enum class watermark_type_t
-    {
-        pre_apply,
-        post_apply,
-        post_gc,
-        pre_truncate,
-        // This should always be last.
-        count
-    };
-
     // An array of monotonically nondecreasing timestamps, or "watermarks", that
     // represent the progress of system maintenance tasks with respect to txn
-    // history. See `watermark_type_t` for a full explanation.
-    static inline std::array<std::atomic<gaia_txn_id_t::value_type>, common::get_enum_value(watermark_type_t::count)> s_watermarks{};
+    // history. See `watermarks_t` for a full explanation.
+    static inline watermarks_t s_watermarks{};
 
     // A global array in which each session thread publishes a "safe timestamp"
     // that it needs to protect from memory reclamation. The minimum of all
@@ -246,26 +205,6 @@ private:
     thread_local static inline size_t s_safe_ts_index{c_invalid_safe_ts_index};
 
 private:
-    // Returns the current value of the given watermark.
-    static inline gaia_txn_id_t get_watermark(watermark_type_t watermark_type)
-    {
-        return s_watermarks[common::get_enum_value(watermark_type)].load();
-    }
-
-    // Returns a reference to the array entry of the given watermark.
-    static inline std::atomic<gaia_txn_id_t::value_type>& get_watermark_entry(watermark_type_t watermark_type)
-    {
-        return s_watermarks[common::get_enum_value(watermark_type)];
-    }
-
-    // Atomically advances the given watermark to the given timestamp, if the
-    // given timestamp is larger than the watermark's current value. It thus
-    // guarantees that the watermark is monotonically nondecreasing in time.
-    //
-    // Returns true if the watermark was advanced to the given value, false
-    // otherwise.
-    static bool advance_watermark(watermark_type_t watermark_type, gaia_txn_id_t ts);
-
     // Reserves an index for the current thread in
     // `s_safe_ts_per_thread_entries`. The entries at this index are read-write
     // for the current thread and read-only for all other threads.

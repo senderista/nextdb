@@ -160,7 +160,7 @@ server_t::safe_watermark_t::safe_watermark_t(watermark_type_t watermark_type)
     // the watermark.
     while (true)
     {
-        gaia_txn_id_t watermark_ts = get_watermark(watermark_type);
+        gaia_txn_id_t watermark_ts = s_watermarks.get_watermark(watermark_type);
         try
         {
             // First try to obtain a local safe_ts for the current value of the

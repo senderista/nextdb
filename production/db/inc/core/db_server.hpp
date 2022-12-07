@@ -97,6 +97,7 @@ class server_t
     friend gaia::db::id_index_t* gaia::db::get_id_index();
     friend gaia::db::type_index_t* gaia::db::get_type_index();
     friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
+    friend gaia::db::watermarks_t* get_watermarks();
     friend gaia::db::txn_log_t* gaia::db::get_txn_log();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
@@ -148,6 +149,7 @@ private:
     static inline mapped_data_t<id_index_t> s_shared_id_index{};
     static inline mapped_data_t<type_index_t> s_shared_type_index{};
     static inline mapped_data_t<transactions::txn_metadata_t> s_shared_txn_metadata{};
+    static inline mapped_data_t<watermarks_t> s_shared_watermarks{};
 
     // The allocated status of each log offset is tracked in this bitmap. When
     // opening a new txn, each session thread must allocate an offset for its txn
@@ -163,11 +165,6 @@ private:
     // overflow. A 64-bit atomically incremented counter cannot overflow in any
     // reasonable time.
     static inline std::atomic<size_t> s_next_unused_log_offset{1};
-
-    // An array of monotonically nondecreasing timestamps, or "watermarks", that
-    // represent the progress of system maintenance tasks with respect to txn
-    // history. See `watermarks_t` for a full explanation.
-    static inline watermarks_t s_watermarks{};
 
     // A global array in which each session thread publishes a "safe timestamp"
     // that it needs to protect from memory reclamation. The minimum of all
@@ -274,6 +271,7 @@ private:
         {data_mapping_t::index_t::id_index, &s_shared_id_index, c_gaia_mem_id_index_prefix},
         {data_mapping_t::index_t::type_index, &s_shared_type_index, c_gaia_mem_type_index_prefix},
         {data_mapping_t::index_t::txn_metadata, &s_shared_txn_metadata, c_gaia_mem_txn_metadata_prefix},
+        {data_mapping_t::index_t::watermarks, &s_shared_watermarks, c_gaia_mem_watermarks_prefix},
     };
 
     // Function pointer type that executes side effects of a session state transition.

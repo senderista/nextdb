@@ -64,11 +64,18 @@ static gaia::db::type_index_t* get_type_index()
 
 static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
 {
-    // Since we don't use this accessor in the server itself, we can assert that
-    // it is always non-null (since callers should never be able to see it in
-    // its null state, i.e., with the txn_metadata segment unmapped).
+    // The txn_metadata segment should always be mapped whenever any callers
+    // of this method are able to observe it.
     DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_txn_metadata.is_set(), "Server txn_metadata segment is unmapped!");
     return gaia::db::server_t::s_shared_txn_metadata.data();
+}
+
+static gaia::db::watermarks_t* get_watermarks()
+{
+    // The watermarks segment should always be mapped whenever any callers
+    // of this method are able to observe it.
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_watermarks.is_set(), "Server watermarks segment is unmapped!");
+    return gaia::db::server_t::s_shared_watermarks.data();
 }
 
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()

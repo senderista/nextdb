@@ -19,6 +19,7 @@
 #include "memory_manager.hpp"
 #include "txn_metadata.hpp"
 #include "type_index.hpp"
+#include "watermarks.hpp"
 
 namespace gaia
 {
@@ -59,6 +60,7 @@ struct client_session_context_t
     mapped_data_t<id_index_t> shared_id_index;
     mapped_data_t<type_index_t> shared_type_index;
     mapped_data_t<transactions::txn_metadata_t> shared_txn_metadata;
+    mapped_data_t<watermarks_t> shared_watermarks;
 
     // The list of data mappings that we manage together.
     // The order of declarations must be the order of data_mapping_t::index_t values!

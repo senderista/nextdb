@@ -71,6 +71,7 @@ constexpr char c_gaia_mem_logs_prefix[] = "gaia_mem_logs_";
 constexpr char c_gaia_mem_id_index_prefix[] = "gaia_mem_id_index_";
 constexpr char c_gaia_mem_type_index_prefix[] = "gaia_mem_type_index_";
 constexpr char c_gaia_mem_txn_metadata_prefix[] = "gaia_mem_txn_metadata_";
+constexpr char c_gaia_mem_watermarks_prefix[] = "gaia_mem_watermarks_";
 
 constexpr char c_gaia_mem_txn_log_prefix[] = "gaia_mem_txn_log_";
 constexpr char c_gaia_internal_txn_log_prefix[] = "gaia_internal_txn_log_";

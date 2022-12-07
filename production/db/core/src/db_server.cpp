@@ -517,9 +517,6 @@ void server_t::init_shared_memory()
     // Clear server state if an exception is thrown.
     auto cleanup_memory = make_scope_guard([] { clear_server_state(); });
 
-    // Initialize watermarks.
-    s_watermarks.clear();
-
     // Validate shared memory mapping definitions and assert that mappings are not made yet.
     data_mapping_t::validate(c_data_mappings, std::size(c_data_mappings));
     for (auto data_mapping : c_data_mappings)
@@ -1658,8 +1655,8 @@ void server_t::apply_txn_log_from_ts(gaia_txn_id_t commit_ts)
     // Because txn logs are only eligible for GC after they fall behind the
     // post-apply watermark, we don't need to protect this txn log from GC.
     ASSERT_INVARIANT(
-        commit_ts <= s_watermarks.get_watermark(watermark_type_t::pre_apply) &&
-        commit_ts > s_watermarks.get_watermark(watermark_type_t::post_apply),
+        commit_ts <= get_watermarks()->get_watermark(watermark_type_t::pre_apply) &&
+        commit_ts > get_watermarks()->get_watermark(watermark_type_t::post_apply),
         "Cannot apply txn log unless it is at or behind the pre-apply watermark and ahead of the post-apply watermark!");
     log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts);
     txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
@@ -1935,18 +1932,18 @@ void server_t::apply_txn_logs_to_shared_view()
         //
         // REVIEW: These loads could be relaxed, because a stale read could only
         // result in premature abort of the scan.
-        if (s_watermarks.get_watermark(watermark_type_t::pre_apply) != prev_ts
-            || s_watermarks.get_watermark(watermark_type_t::post_apply) != prev_ts)
+        if (get_watermarks()->get_watermark(watermark_type_t::pre_apply) != prev_ts
+            || get_watermarks()->get_watermark(watermark_type_t::post_apply) != prev_ts)
         {
             break;
         }
 
-        if (!s_watermarks.advance_watermark(watermark_type_t::pre_apply, ts))
+        if (!get_watermarks()->advance_watermark(watermark_type_t::pre_apply, ts))
         {
             // If another thread has already advanced the watermark ahead of
             // this ts, we abort advancing it further.
             ASSERT_INVARIANT(
-                s_watermarks.get_watermark(watermark_type_t::pre_apply) > static_cast<gaia_txn_id_t>(pre_apply_watermark),
+                get_watermarks()->get_watermark(watermark_type_t::pre_apply) > static_cast<gaia_txn_id_t>(pre_apply_watermark),
                 "The watermark must have advanced if advance_watermark() failed!");
 
             break;
@@ -1973,7 +1970,7 @@ void server_t::apply_txn_logs_to_shared_view()
         // Now we advance the post-apply watermark to catch up with the pre-apply watermark.
         // REVIEW: Because no other thread can concurrently advance the post-apply watermark,
         // we don't need a full CAS here.
-        bool has_advanced_watermark = s_watermarks.advance_watermark(watermark_type_t::post_apply, ts);
+        bool has_advanced_watermark = get_watermarks()->advance_watermark(watermark_type_t::post_apply, ts);
 
         // No other thread should be able to advance the post-apply watermark,
         // because only one thread can advance the pre-apply watermark to this
@@ -2138,12 +2135,12 @@ void server_t::update_post_gc_watermark()
             }
         }
 
-        if (!s_watermarks.advance_watermark(watermark_type_t::post_gc, ts))
+        if (!get_watermarks()->advance_watermark(watermark_type_t::post_gc, ts))
         {
             // If another thread has already advanced the post-GC watermark
             // ahead of this ts, we abort advancing it further.
             ASSERT_INVARIANT(
-                s_watermarks.get_watermark(watermark_type_t::post_gc) > static_cast<gaia_txn_id_t>(post_gc_watermark),
+                get_watermarks()->get_watermark(watermark_type_t::post_gc) > static_cast<gaia_txn_id_t>(post_gc_watermark),
                 "The watermark must have advanced if advance_watermark() failed!");
 
             break;
@@ -2154,7 +2151,7 @@ void server_t::update_post_gc_watermark()
 void server_t::truncate_txn_table()
 {
     // Get a snapshot of the pre-truncate watermark before advancing it.
-    gaia_txn_id_t prev_pre_truncate_watermark = s_watermarks.get_watermark(watermark_type_t::pre_truncate);
+    gaia_txn_id_t prev_pre_truncate_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_truncate);
 
     // Compute a safe truncation timestamp.
     gaia_txn_id_t new_pre_truncate_watermark = get_safe_truncation_ts();
@@ -2171,12 +2168,12 @@ void server_t::truncate_txn_table()
     }
 
     // Try to advance the pre-truncate watermark.
-    if (!s_watermarks.advance_watermark(watermark_type_t::pre_truncate, new_pre_truncate_watermark))
+    if (!get_watermarks()->advance_watermark(watermark_type_t::pre_truncate, new_pre_truncate_watermark))
     {
         // Abort if another thread has concurrently advanced the
         // pre-truncate watermark, to avoid contention.
         ASSERT_INVARIANT(
-            s_watermarks.get_watermark(watermark_type_t::pre_truncate) > prev_pre_truncate_watermark,
+            get_watermarks()->get_watermark(watermark_type_t::pre_truncate) > prev_pre_truncate_watermark,
             "The watermark must have advanced if advance_watermark() failed!");
 
         return;
@@ -2483,7 +2480,7 @@ bool server_t::reserve_safe_ts(gaia_txn_id_t safe_ts)
         should_validate = (safe_ts < entries[valid_entry_index]);
     }
 
-    if (should_validate && safe_ts < s_watermarks.get_watermark(watermark_type_t::post_gc))
+    if (should_validate && safe_ts < get_watermarks()->get_watermark(watermark_type_t::post_gc))
     {
         // If validation fails, invalidate this entry to revert to the
         // previously published entry.
@@ -2521,7 +2518,7 @@ void server_t::release_safe_ts()
     {
         ASSERT_INVARIANT(
             (entries[i] == c_invalid_gaia_txn_id) ||
-            (entries[i] >= s_watermarks.get_watermark(watermark_type_t::pre_truncate)),
+            (entries[i] >= get_watermarks()->get_watermark(watermark_type_t::pre_truncate)),
             "A reserved safe_ts entry cannot lag the pre-truncate watermark!");
 
         is_entry_valid[i] = (entries[i] != c_invalid_gaia_txn_id);
@@ -2596,7 +2593,7 @@ gaia_txn_id_t server_t::get_safe_truncation_ts()
     // <= "published and validated safe timestamp"
 
     // Take a snapshot of the post-GC watermark before the scan.
-    gaia_txn_id_t pre_scan_post_gc_watermark = s_watermarks.get_watermark(watermark_type_t::post_gc);
+    gaia_txn_id_t pre_scan_post_gc_watermark = get_watermarks()->get_watermark(watermark_type_t::post_gc);
 
     // The post-GC watermark is an upper bound on the safe truncation timestamp.
     gaia_txn_id_t safe_truncation_ts = pre_scan_post_gc_watermark;

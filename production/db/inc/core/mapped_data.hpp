@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <new>
+#include <type_traits>
 #include <vector>
 
 #include "db_internal_types.hpp"

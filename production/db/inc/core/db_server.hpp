@@ -117,19 +117,6 @@ private:
     static inline std::unordered_map<chunk_offset_t, chunk_version_t>& map_gc_chunks_to_versions();
 
 private:
-    // This is arbitrary but seems like a reasonable starting point (pending benchmarks).
-    static constexpr size_t c_stream_batch_size{1UL << 10};
-
-    // This is necessary to avoid VM exhaustion in the worst case where all
-    // sessions are opened from a single process (we remap the 256GB data
-    // segment for each session, so the 128TB of VM available to each process
-    // would be exhausted by 512 sessions opened in a single process, but we
-    // also create other large per-session mappings, so we need a large margin
-    // of error, hence the choice of 128 for the session limit).
-    // REVIEW: How much could we relax this limit if we revert to per-process
-    // mappings of the data segment?
-    static constexpr size_t c_session_limit{1UL << 7};
-
     // We don't use an auto-pointer because its destructor is "non-trivial"
     // and that would add overhead to the TLS implementation.
     thread_local static inline server_session_context_t* s_session_context{nullptr};
@@ -150,21 +137,6 @@ private:
     static inline mapped_data_t<type_index_t> s_shared_type_index{};
     static inline mapped_data_t<transactions::txn_metadata_t> s_shared_txn_metadata{};
     static inline mapped_data_t<watermarks_t> s_shared_watermarks{};
-
-    // The allocated status of each log offset is tracked in this bitmap. When
-    // opening a new txn, each session thread must allocate an offset for its txn
-    // log by setting a cleared bit in this bitmap. When txn log GC completes,
-    // the log's allocated bit should be cleared.
-    static inline std::array<
-        std::atomic<uint64_t>, (c_max_logs + 1) / common::c_uint64_bit_count>
-        s_allocated_log_offsets_bitmap{};
-
-    // We use this offset to track the lowest-numbered log offset that has never
-    // been allocated.
-    // NB: We use size_t here rather than log_offset_t to avoid integer
-    // overflow. A 64-bit atomically incremented counter cannot overflow in any
-    // reasonable time.
-    static inline std::atomic<size_t> s_next_unused_log_offset{1};
 
     // A global array in which each session thread publishes a "safe timestamp"
     // that it needs to protect from memory reclamation. The minimum of all
@@ -243,22 +215,6 @@ private:
     // The timestamp returned is guaranteed not to exceed any "safe timestamp"
     // that was reserved before this method was called.
     static gaia_txn_id_t get_safe_truncation_ts();
-
-    // Returns true if the given log offset is allocated, false otherwise.
-    static bool is_log_offset_allocated(log_offset_t offset);
-
-    // Allocates the first unallocated log offset, returning the invalid log
-    // offset if no unallocated offset is available.
-    static log_offset_t allocate_log_offset();
-
-    // Deallocates the given log offset.
-    static void deallocate_log_offset(log_offset_t offset);
-
-    // Allocates the first used log offset.
-    static log_offset_t allocate_used_log_offset();
-
-    // Allocates the first unused log offset.
-    static log_offset_t allocate_unused_log_offset();
 
 private:
     // A list of data mappings that we manage together.

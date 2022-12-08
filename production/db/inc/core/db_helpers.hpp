@@ -160,7 +160,7 @@ inline void apply_log_to_locators(locators_t* locators, txn_log_t* txn_log, size
 
 inline void apply_log_from_offset(locators_t* locators, log_offset_t log_offset, size_t starting_log_record_index = 0)
 {
-    txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
+    txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
     apply_log_to_locators(locators, txn_log, starting_log_record_index);
 }
 
@@ -246,13 +246,13 @@ inline void log_txn_operation(
 
 inline bool acquire_txn_log_reference(log_offset_t log_offset, gaia_txn_id_t begin_ts)
 {
-    txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
+    txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
     return txn_log->acquire_reference(begin_ts);
 }
 
 inline void release_txn_log_reference(log_offset_t log_offset, gaia_txn_id_t begin_ts)
 {
-    txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
+    txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
     txn_log->release_reference(begin_ts);
 }
 

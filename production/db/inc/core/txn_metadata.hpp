@@ -15,6 +15,7 @@
 #include <optional>
 
 #include "gaia_internal/common/assert.hpp"
+#include "gaia_internal/db/db.hpp"
 #include "gaia_internal/db/db_types.hpp"
 
 #include "db_internal_types.hpp"
@@ -135,10 +136,6 @@ private:
     // same process, we restrict timestamps to a much smaller range (2^35) than
     // would be suitable for production. This will be fixed when we transition
     // the txn metadata array to a ring buffer.
-    //
-    // DUP: temporarily copied from db_server.hpp
-    static constexpr size_t c_session_limit{1UL << 7};
-
     std::atomic<uint64_t> m_txn_metadata_map[txn_metadata_entry_t::get_max_ts_count() / c_session_limit];
 };
 

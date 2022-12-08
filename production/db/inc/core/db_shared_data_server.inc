@@ -88,14 +88,6 @@ static gaia::db::memory_manager::chunk_manager_t* get_chunk_manager()
     return &gaia::db::server_t::s_session_context->chunk_manager;
 }
 
-static gaia::db::txn_log_t* get_txn_log_from_offset(gaia::db::log_offset_t offset)
-{
-    DEBUG_ASSERT_PRECONDITION(offset.is_valid(), "Txn log offset is invalid!");
-
-    gaia::db::logs_t* logs = get_logs();
-    return &((*logs)[offset]);
-}
-
 static gaia::db::txn_log_t* get_txn_log()
 {
     log_offset_t txn_log_offset;
@@ -103,7 +95,7 @@ static gaia::db::txn_log_t* get_txn_log()
     {
         txn_log_offset = gaia::db::server_t::s_session_context->txn_context->txn_log_offset;
     }
-    return get_txn_log_from_offset(txn_log_offset);
+    return get_logs()->get_log_from_offset(txn_log_offset);
 }
 
 static gaia::db::gaia_txn_id_t get_txn_id()

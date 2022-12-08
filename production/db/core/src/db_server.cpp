@@ -143,7 +143,7 @@ void server_t::txn_begin()
     get_txn_log_offsets_for_snapshot(txn_id(), txn_logs_for_snapshot());
 
     // Allocate the txn log offset on the server, for rollback-safety if the client session crashes.
-    s_session_context->txn_context->txn_log_offset = allocate_log_offset();
+    s_session_context->txn_context->txn_log_offset = get_logs()->allocate_log_offset(txn_id());
 
     // REVIEW: This exception needs to be thrown on the client!
     if (!txn_log_offset().is_valid())
@@ -187,7 +187,7 @@ void server_t::get_txn_log_offsets_for_snapshot(
                 // when we increment the reference count, so we will never try
                 // to apply a reused txn log.
                 log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(ts);
-                txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
+                txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
                 if (txn_log->acquire_reference(txn_id))
                 {
                     txn_ids_with_log_offsets_for_snapshot.emplace_back(txn_id, log_offset);
@@ -224,7 +224,7 @@ void server_t::release_txn_log_offsets_for_snapshot()
 {
     for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
     {
-        get_txn_log_from_offset(log_offset)->release_reference(txn_id);
+        get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
     }
 
     txn_logs_for_snapshot().clear();
@@ -541,6 +541,12 @@ void server_t::init_shared_memory()
     // s_shared_txn_metadata uses (8B) * get_max_ts_count() = 32TB of virtual address space.
     data_mapping_t::create(c_data_mappings, s_server_conf.instance_name().c_str());
 
+    // REVIEW: The data mapping code should ideally call the default constructor
+    // for the templated type using placement new, but this zero-initializes
+    // giant arrays that are zeroed already, so we have to use ad-hoc
+    // initialization where it's necessary.
+    get_logs()->initialize();
+
     // We don't execute within a session, so we need to create our own session context.
     s_session_context = new server_session_context_t();
     auto cleanup_session_context = make_scope_guard([&] {
@@ -550,15 +556,6 @@ void server_t::init_shared_memory()
 
     bool initializing = true;
     init_memory_manager(initializing);
-
-    // Initialize txn log allocation metadata structures.
-
-    // Start log allocations at the first valid offset.
-    s_next_unused_log_offset = c_first_log_offset;
-    // Mark all log offsets as initially unallocated.
-    std::fill(std::begin(s_allocated_log_offsets_bitmap), std::end(s_allocated_log_offsets_bitmap), 0);
-    // Mark the invalid offset as allocated.
-    safe_set_bit_value(s_allocated_log_offsets_bitmap.data(), s_allocated_log_offsets_bitmap.size(), c_invalid_log_offset, true);
 
     cleanup_memory.dismiss();
 }
@@ -1368,7 +1365,7 @@ gaia_txn_id_t server_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
 {
     ASSERT_PRECONDITION(get_txn_metadata()->is_txn_active(begin_ts), "Not an active transaction!");
 
-    ASSERT_PRECONDITION(is_log_offset_allocated(log_offset), "Invalid log offset!");
+    ASSERT_PRECONDITION(get_logs()->is_log_offset_allocated(log_offset), "Invalid log offset!");
 
     // Allocate a new commit_ts and initialize its metadata with our begin_ts and log offset.
     gaia_txn_id_t commit_ts = get_txn_metadata()->register_commit_ts(begin_ts, log_offset);
@@ -1388,8 +1385,8 @@ gaia_txn_id_t server_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
 // just log them for diagnostics), we could use std::set_intersection.
 bool server_t::txn_logs_conflict(log_offset_t offset1, log_offset_t offset2)
 {
-    txn_log_t* log1 = get_txn_log_from_offset(offset1);
-    txn_log_t* log2 = get_txn_log_from_offset(offset2);
+    txn_log_t* log1 = get_logs()->get_log_from_offset(offset1);
+    txn_log_t* log2 = get_logs()->get_log_from_offset(offset2);
 
     // Perform standard merge intersection and terminate on the first conflict found.
     size_t log1_idx = 0, log2_idx = 0;
@@ -1659,7 +1656,7 @@ void server_t::apply_txn_log_from_ts(gaia_txn_id_t commit_ts)
         commit_ts > get_watermarks()->get_watermark(watermark_type_t::post_apply),
         "Cannot apply txn log unless it is at or behind the pre-apply watermark and ahead of the post-apply watermark!");
     log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts);
-    txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
+    txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
 
     // Ensure that the begin_ts in this metadata entry matches the txn log header.
     ASSERT_INVARIANT(
@@ -1678,7 +1675,7 @@ void server_t::apply_txn_log_from_ts(gaia_txn_id_t commit_ts)
 
 void server_t::gc_txn_log_from_offset(log_offset_t log_offset, bool is_committed)
 {
-    txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
+    txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
 
     // If the txn committed, we deallocate only undo versions, because the
     // redo versions may still be visible after the txn has fallen
@@ -2020,7 +2017,7 @@ void server_t::gc_applied_txn_logs()
 
             log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(ts);
             ASSERT_INVARIANT(log_offset.is_valid(), "A commit_ts txn metadata entry must have a valid log offset!");
-            txn_log_t* txn_log = get_txn_log_from_offset(log_offset);
+            txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
             gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(ts);
 
             // If our begin_ts doesn't match the current begin_ts, the txn log
@@ -2045,7 +2042,7 @@ void server_t::gc_applied_txn_logs()
 
             // Because we invalidated the log offset, we need to ensure it is
             // deallocated so it can be reused.
-            auto cleanup_log_offset = make_scope_guard([&log_offset] { deallocate_log_offset(log_offset); });
+            auto cleanup_log_offset = make_scope_guard([&log_offset] { get_logs()->deallocate_log_offset(log_offset); });
 
             // Deallocate obsolete object versions and update index entries.
             gc_txn_log_from_offset(log_offset, get_txn_metadata()->is_txn_committed(ts));
@@ -2257,7 +2254,7 @@ void server_t::txn_rollback(bool client_disconnected)
     gc_txn_log_from_offset(txn_log_offset(), is_committed);
 
     // Make txn log offset available for reuse.
-    deallocate_log_offset(txn_log_offset());
+    get_logs()->deallocate_log_offset(txn_log_offset());
 
     // Set our txn status to TXN_TERMINATED.
     // This allows GC to proceed past this txn's begin_ts.
@@ -2626,176 +2623,6 @@ gaia_txn_id_t server_t::get_safe_truncation_ts()
     // Return the minimum of the pre-scan snapshot of the post-GC watermark and
     // the smallest published timestamp that the scan observed.
     return safe_truncation_ts;
-}
-
-bool server_t::is_log_offset_allocated(log_offset_t offset)
-{
-    return is_bit_set(
-        s_allocated_log_offsets_bitmap.data(),
-        s_allocated_log_offsets_bitmap.size(),
-        static_cast<size_t>(offset));
-}
-
-log_offset_t server_t::allocate_used_log_offset()
-{
-    // Starting from the first valid offset, scan for the first unallocated
-    // offset, up to a snapshot of s_next_unused_log_offset. If we fail to claim
-    // an unallocated offset, restart the scan. (If we fail to find or claim any
-    // reused offsets, then the caller can allocate a new offset from unused
-    // memory.) Since s_next_unused_log_offset can be concurrently advanced, and
-    // offsets can also be deallocated behind our scan pointer, this search is
-    // best-effort; we could miss an offset deallocated concurrently with our
-    // scan.
-    size_t first_unused_offset = s_next_unused_log_offset;
-
-    // If we're out of unused offsets, set the exclusive upper bound of the
-    // bitmap scan to just past the end of the bitmap.
-    if (first_unused_offset > c_last_log_offset)
-    {
-        first_unused_offset = c_last_log_offset + 1;
-    }
-
-    // Try to set the first unset bit in the "allocated log offsets" bitmap.
-    log_offset_t allocated_offset = c_invalid_log_offset;
-    while (true)
-    {
-        size_t first_unallocated_index = find_first_unset_bit(
-            s_allocated_log_offsets_bitmap.data(),
-            s_allocated_log_offsets_bitmap.size(),
-            first_unused_offset);
-
-        // If our scan doesn't find any unset bits, immediately return failure
-        // rather than retrying the scan (otherwise this could lead to an
-        // infinite loop).
-        if (first_unallocated_index == c_max_bit_index)
-        {
-            break;
-        }
-
-        ASSERT_INVARIANT(
-            first_unallocated_index >= c_first_log_offset
-                && first_unallocated_index <= c_last_log_offset,
-            "Index returned by find_first_unset_bit() is outside expected range!");
-
-        // If the CAS to set the bit fails, restart the scan, even if the bit
-        // was still unset when the CAS failed (a failed CAS indicates
-        // contention and we should back off by restarting the scan).
-        //
-        // Restart the scan if the bit was already set when we tried to set it,
-        // because that means that another thread has already allocated this
-        // offset. We force try_set_bit_value() to fail in this case by passing
-        // fail_if_already_set=true.
-        bool fail_if_already_set = true;
-        if (try_set_bit_value(
-                s_allocated_log_offsets_bitmap.data(),
-                s_allocated_log_offsets_bitmap.size(),
-                first_unallocated_index, true, fail_if_already_set))
-        {
-            allocated_offset = static_cast<log_offset_t>(first_unallocated_index);
-            break;
-        }
-    }
-
-    return allocated_offset;
-}
-
-log_offset_t server_t::allocate_unused_log_offset()
-{
-    // We claim the next available unused offset, and keep trying until we succeed.
-    // (This is not wait-free, but conflicts should be rare.)
-    while (true)
-    {
-        // Get the next available unused offset.
-        size_t next_offset = s_next_unused_log_offset++;
-
-        // If we've run out of log space, return the invalid offset.
-        if (next_offset > c_last_log_offset)
-        {
-            return c_invalid_log_offset;
-        }
-
-        // At this point, we know that next_offset is a valid log_offset_t.
-        ASSERT_INVARIANT(
-            next_offset >= c_first_log_offset
-                && next_offset <= c_last_log_offset,
-            "next_offset is out of range!");
-
-        // If the CAS to set the bit fails, try the next available unused
-        // offset, even if the bit was still unset when the CAS failed (a failed
-        // CAS indicates contention and we should back off by restarting the
-        // scan).
-        //
-        // Retry if the bit was already set when we tried to set it,
-        // because that means that another thread has already allocated this
-        // offset. We force try_set_bit_value() to fail in this case by passing
-        // fail_if_already_set=true.
-        bool fail_if_already_set = true;
-        if (try_set_bit_value(
-                s_allocated_log_offsets_bitmap.data(),
-                s_allocated_log_offsets_bitmap.size(),
-                next_offset, true, fail_if_already_set))
-        {
-            return static_cast<log_offset_t>(next_offset);
-        }
-    }
-}
-
-// REVIEW: Under most workloads, only a few txn log offsets will ever be in use,
-// so concurrent log offset allocations will contend on just 1 or 2 words in the
-// allocated log offset bitmap. We could reduce contention by forcing
-// allocations to use more of the available offset space. OTOH, the current
-// implementation ensures that readers only need to scan a few words to find an
-// unused offset, and it minimizes minor page faults and TLB misses. We could
-// re-evaluate this reader/writer tradeoff if contention proves to be an issue.
-log_offset_t server_t::allocate_log_offset()
-{
-    // First try to reuse a deallocated offset.
-    log_offset_t allocated_offset = allocate_used_log_offset();
-
-    // If no deallocated offset is available, then allocate the next unused offset.
-    if (!allocated_offset.is_valid())
-    {
-        allocated_offset = allocate_unused_log_offset();
-    }
-
-    // At this point, we must either have a valid offset, or we have run out of log space.
-    ASSERT_INVARIANT(
-        allocated_offset.is_valid() || (s_next_unused_log_offset > c_last_log_offset),
-        "Log offset allocation cannot fail unless log space is exhausted!");
-
-    // Initialize txn log metadata.
-    // REVIEW: We could move this initialization logic into a wrapping function,
-    // so this function is only responsible for allocating the offset.
-    if (allocated_offset.is_valid())
-    {
-        ASSERT_INVARIANT(txn_id().is_valid(), "Cannot allocate a txn log without a valid txn ID!");
-        txn_log_t* txn_log = get_txn_log_from_offset(allocated_offset);
-        // If we allocated an unallocated or deallocated offset, its log header must be uninitialized.
-        ASSERT_INVARIANT(txn_log->begin_ts() == 0, "Cannot allocate a txn log with a valid txn ID!");
-        ASSERT_INVARIANT(txn_log->reference_count() == 0, "Cannot allocate a txn log with a nonzero reference count!");
-        // Update the log header with our begin timestamp.
-        // (We don't initialize the refcount because that only tracks readers, not owners.)
-        txn_log->set_begin_ts(txn_id());
-    }
-
-    return allocated_offset;
-}
-
-void server_t::deallocate_log_offset(log_offset_t offset)
-{
-    ASSERT_PRECONDITION(
-        is_log_offset_allocated(offset), "Cannot deallocate unallocated log offset!");
-
-    // The txn log header at this offset must have an invalid txn ID and zero refcount.
-    // REVIEW: these asserts require access to shared memory, so could be debug-only.
-    txn_log_t* txn_log = get_txn_log_from_offset(offset);
-    ASSERT_PRECONDITION(!txn_log->begin_ts().is_valid(), "Cannot deallocate a txn log with a valid txn ID!");
-    ASSERT_PRECONDITION(txn_log->reference_count() == 0, "Cannot deallocate a txn log with a nonzero reference count!");
-
-    safe_set_bit_value(
-        s_allocated_log_offsets_bitmap.data(),
-        s_allocated_log_offsets_bitmap.size(),
-        static_cast<size_t>(offset), false);
 }
 
 // This method must be run on the main thread

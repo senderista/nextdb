@@ -26,6 +26,7 @@
 
 #include "db_helpers.hpp"
 #include "db_internal_types.hpp"
+#include "safe_ts.hpp"
 
 using namespace gaia::common;
 using namespace gaia::db;
@@ -112,6 +113,7 @@ void client_t::begin_session()
     // Fail if a session already exists on this thread.
     verify_no_session();
 
+    // Allocate and initialize new session context.
     ASSERT_PRECONDITION(
         !s_session_context,
         "Session context should not be initialized already at the start of a new session!");
@@ -194,8 +196,16 @@ void client_t::begin_session()
     // Set up the private locator segment fd.
     s_session_context->fd_locators = fd_locators;
 
+    // Initialize thread-local data for safe timestamp mechanism.
+    // This MUST be done *after* initializing the shared-memory mappings!
+    safe_ts_t::initialize(get_safe_ts_entries(), get_watermarks());
+    auto cleanup_safe_ts_data = make_scope_guard([] {
+        safe_ts_t::finalize();
+    });
+
     init_memory_manager();
 
+    cleanup_safe_ts_data.dismiss();
     cleanup_fd_locators.dismiss();
     cleanup_session_context.dismiss();
 }
@@ -205,8 +215,10 @@ void client_t::end_session()
     verify_session_active();
     verify_no_txn();
 
-    // Ensure the cleaning of the session context.
     auto cleanup_session_context = make_scope_guard([&] {
+        // Clean up thread-local data for safe timestamp mechanism.
+        // This MUST be called *before* cleaning up session context!
+        safe_ts_t::finalize();
         delete s_session_context;
         s_session_context = nullptr;
     });

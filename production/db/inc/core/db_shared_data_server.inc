@@ -78,6 +78,14 @@ static gaia::db::watermarks_t* get_watermarks()
     return gaia::db::server_t::s_shared_watermarks.data();
 }
 
+static gaia::db::safe_ts_entries_t* get_safe_ts_entries()
+{
+    // The safe_ts_entries segment should always be mapped whenever any callers
+    // of this method are able to observe it.
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_safe_ts_entries.is_set(), "Server safe_ts_entries segment is unmapped!");
+    return gaia::db::server_t::s_shared_safe_ts_entries.data();
+}
+
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()
 {
     return &gaia::db::server_t::s_session_context->memory_manager;

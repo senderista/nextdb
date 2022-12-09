@@ -15,7 +15,6 @@
 #include "mapped_data.hpp"
 #include "memory_manager.hpp"
 #include "memory_types.hpp"
-#include "type_index.hpp"
 
 #ifdef GAIA_DB_SERVER
 #include "db_server.hpp"

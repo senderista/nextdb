@@ -22,10 +22,10 @@
 
 #include "gaia_internal/common/generator_iterator.hpp"
 
+#include "safe_ts.hpp"
 #include "server_contexts.hpp"
 #include "txn_metadata.hpp"
 #include "type_index.hpp"
-#include "watermarks.hpp"
 
 namespace gaia
 {
@@ -98,6 +98,7 @@ class server_t
     friend gaia::db::type_index_t* gaia::db::get_type_index();
     friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
     friend gaia::db::watermarks_t* get_watermarks();
+    friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
     friend gaia::db::txn_log_t* gaia::db::get_txn_log();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
@@ -137,84 +138,7 @@ private:
     static inline mapped_data_t<type_index_t> s_shared_type_index{};
     static inline mapped_data_t<transactions::txn_metadata_t> s_shared_txn_metadata{};
     static inline mapped_data_t<watermarks_t> s_shared_watermarks{};
-
-    // A global array in which each session thread publishes a "safe timestamp"
-    // that it needs to protect from memory reclamation. The minimum of all
-    // published "safe timestamps" is an upper bound below which all txn
-    // metadata entries can be safely reclaimed.
-    //
-    // Each thread maintains 2 publication entries rather than 1, in order to
-    // tolerate validation failures. See the reserve_safe_ts() implementation
-    // for a full explanation.
-    //
-    // Before using the safe_ts API, a thread must first reserve an index in
-    // this array using reserve_safe_ts_index(). When a thread is no longer
-    // using the safe_ts API (e.g., at session exit), it should call
-    // release_safe_ts_index() to make this index available for use by other
-    // threads.
-    //
-    // The only clients of the safe_ts API are expected to be session threads,
-    // so we only allocate enough entries for the maximum allowed number of
-    // session threads.
-    static inline std::array<std::array<std::atomic<gaia_txn_id_t::value_type>, 2>, c_session_limit>
-        s_safe_ts_per_thread_entries{};
-
-    static constexpr size_t c_invalid_safe_ts_index{s_safe_ts_per_thread_entries.size()};
-
-    // The reserved status of each index into `s_safe_ts_per_thread_entries` is
-    // tracked in this bitmap. Before calling any safe_ts API functions, each
-    // thread must reserve an index by setting a cleared bit in this bitmap.
-    // When it is no longer using the safe_ts API (e.g., at session exit), each
-    // thread should clear the bit that it set.
-    static inline std::array<
-        std::atomic<uint64_t>, s_safe_ts_per_thread_entries.size() / common::c_uint64_bit_count>
-        s_safe_ts_reserved_indexes_bitmap{};
-
-    // The current thread's index in `s_safe_ts_per_thread_entries`.
-    thread_local static inline size_t s_safe_ts_index{c_invalid_safe_ts_index};
-
-private:
-    // Reserves an index for the current thread in
-    // `s_safe_ts_per_thread_entries`. The entries at this index are read-write
-    // for the current thread and read-only for all other threads.
-    //
-    // Returns true if an index was successfully reserved, false otherwise.
-    static bool reserve_safe_ts_index();
-
-    // Releases the current thread's index in `s_safe_ts_per_thread_entries`,
-    // allowing the entries at that index to be used by other threads.
-    //
-    // This method cannot fail or throw.
-    static void release_safe_ts_index();
-
-    // Reserves a "safe timestamp" that protects its own and all subsequent
-    // metadata entries from memory reclamation, by ensuring that the
-    // pre-truncate watermark can never advance past it until release_safe_ts()
-    // is called on that timestamp.
-    //
-    // Any previously reserved "safe timestamp" value for this thread will be
-    // atomically replaced by the new "safe timestamp" value.
-    //
-    // This operation can fail if post-publication validation fails. See the
-    // reserve_safe_ts() implementation for details.
-    //
-    // Returns true if the given timestamp was successfully reserved, false
-    // otherwise.
-    static bool reserve_safe_ts(gaia_txn_id_t safe_ts);
-
-    // Releases the current thread's "safe timestamp", allowing the pre-truncate
-    // watermark to advance past it, signaling to GC tasks that its metadata
-    // entry is eligible for reclamation.
-    //
-    // This method cannot fail or throw.
-    static void release_safe_ts();
-
-    // This method computes a "safe truncation timestamp", i.e., an (exclusive)
-    // upper bound below which all txn metadata entries can be safely reclaimed.
-    //
-    // The timestamp returned is guaranteed not to exceed any "safe timestamp"
-    // that was reserved before this method was called.
-    static gaia_txn_id_t get_safe_truncation_ts();
+    static inline mapped_data_t<safe_ts_entries_t> s_shared_safe_ts_entries{};
 
 private:
     // A list of data mappings that we manage together.
@@ -228,6 +152,7 @@ private:
         {data_mapping_t::index_t::type_index, &s_shared_type_index, c_gaia_mem_type_index_prefix},
         {data_mapping_t::index_t::txn_metadata, &s_shared_txn_metadata, c_gaia_mem_txn_metadata_prefix},
         {data_mapping_t::index_t::watermarks, &s_shared_watermarks, c_gaia_mem_watermarks_prefix},
+        {data_mapping_t::index_t::safe_ts_entries, &s_shared_safe_ts_entries, c_gaia_mem_safe_ts_entries_prefix},
     };
 
     // Function pointer type that executes side effects of a session state transition.
@@ -368,80 +293,6 @@ private:
     static inline bool acquire_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
 
     static inline void release_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
-
-    class safe_ts_failure : public common::gaia_exception
-    {
-    };
-
-    // This class enables client code that is scanning a range of txn metadata
-    // to prevent any of that metadata's memory from being reclaimed during the
-    // scan. The client constructs a safe_ts_t object using the timestamp at the
-    // left endpoint of the scan interval, which will prevent the pre-truncate
-    // watermark from advancing past that timestamp until the safe_ts_t object
-    // exits its scope, ensuring that all txn metadata at or after that "safe
-    // timestamp" is protected from memory reclamation for the duration of the
-    // scan.
-    //
-    // The constructor adds its timestamp argument to a thread-local set
-    // containing the timestamps of all currently active safe_ts_t instances
-    // owned by this thread. The minimum timestamp in the set is recomputed, and
-    // if it has changed, the constructor attempts to reserve the new minimum
-    // timestamp for this thread. If reservation fails, then the constructor
-    // throws a `safe_ts_failure` exception.
-    //
-    // The destructor removes the object's timestamp from the thread-local set,
-    // causing the minimum timestamp in the set to be recomputed. If it has
-    // changed, the new minimum timestamp is reserved for this thread.
-    // (Reservation cannot fail, because the previous minimum timestamp must be
-    // smaller than the new minimum timestamp, so the pre-truncate watermark
-    // could not have advanced beyond the new minimum timestamp.)
-    class safe_ts_t
-    {
-    public:
-        inline explicit safe_ts_t(gaia_txn_id_t safe_ts);
-        inline ~safe_ts_t();
-        safe_ts_t() = default;
-        safe_ts_t(const safe_ts_t&) = delete;
-        safe_ts_t& operator=(const safe_ts_t&) = delete;
-        inline safe_ts_t(safe_ts_t&& other) noexcept;
-        inline safe_ts_t& operator=(safe_ts_t&& other) noexcept;
-        inline operator gaia_txn_id_t() const;
-
-    private:
-        // This member is logically immutable, but it cannot be `const` because
-        // it needs to be set to an invalid value by the move
-        // constructor/assignment operator.
-        gaia_txn_id_t m_ts{c_invalid_gaia_txn_id};
-
-        // We keep this vector sorted for fast searches. We add entries by
-        // appending them and remove entries by swapping them with the tail.
-        thread_local static inline std::vector<gaia_txn_id_t> s_safe_ts_values{};
-    };
-
-    // This class can be used in place of safe_ts_t, when the "safe timestamp"
-    // value is just the current value of a watermark. Unlike the safe_ts_t
-    // class, this class's constructor cannot fail, so clients do not need to
-    // handle exceptions from initialization failure. It should be preferred to
-    // safe_ts_t for protecting a range of txn metadata during a scan, whenever
-    // the left endpoint of the scan interval is just the current value of a
-    // watermark.
-    class safe_watermark_t
-    {
-    public:
-        inline explicit safe_watermark_t(watermark_type_t watermark);
-        safe_watermark_t() = delete;
-        ~safe_watermark_t() = default;
-        safe_watermark_t(const safe_watermark_t&) = delete;
-        safe_watermark_t& operator=(const safe_watermark_t&) = delete;
-        safe_watermark_t(safe_watermark_t&&) = delete;
-        safe_watermark_t& operator=(safe_watermark_t&&) = delete;
-        inline operator gaia_txn_id_t() const;
-
-    private:
-        // This member is logically immutable, but it cannot be `const`, because
-        // the constructor needs to move a local variable into it.
-        safe_ts_t m_safe_ts;
-    };
 };
 
 #include "db_server.inc"

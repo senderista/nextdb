@@ -32,6 +32,9 @@ static inline gaia::db::transactions::txn_metadata_t* get_txn_metadata();
 // Returns a pointer to a mapping of the "watermarks" shared memory segment.
 static inline gaia::db::watermarks_t* get_watermarks();
 
+// Returns a pointer to a mapping of the "safe_ts_entries" shared memory segment.
+static inline gaia::db::safe_ts_entries_t* get_safe_ts_entries();
+
 // Gets the memory manager instance for the current thread or process.
 static inline gaia::db::memory_manager::memory_manager_t* get_memory_manager();
 

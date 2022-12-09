@@ -20,6 +20,7 @@
 #include "mapped_data.hpp"
 #include "memory_manager.hpp"
 #include "messages_generated.h"
+#include "safe_ts.hpp"
 
 namespace gaia
 {
@@ -59,6 +60,9 @@ struct server_session_context_t
 
     // This is used by GC tasks on a session thread to cache chunk IDs for empty chunk deallocation.
     std::unordered_map<chunk_offset_t, chunk_version_t> map_gc_chunks_to_versions;
+
+    // The current thread's safe_ts_entries index.
+    size_t safe_ts_index{safe_ts_entries_t::c_invalid_safe_ts_index};
 
 public:
     inline ~server_session_context_t();

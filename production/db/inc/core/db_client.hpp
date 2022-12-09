@@ -26,6 +26,7 @@
 #include "client_contexts.hpp"
 #include "client_messenger.hpp"
 #include "messages_generated.h"
+#include "safe_ts.hpp"
 
 namespace gaia
 {
@@ -53,6 +54,7 @@ class client_t
     friend gaia::db::type_index_t* gaia::db::get_type_index();
     friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
     friend gaia::db::watermarks_t* get_watermarks();
+    friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
     friend gaia::db::gaia_txn_id_t gaia::db::get_txn_id();

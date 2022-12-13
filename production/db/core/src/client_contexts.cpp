@@ -17,7 +17,7 @@ client_session_context_t::client_session_context_t()
 {
     txn_context = std::make_shared<client_transaction_context_t>();
 
-    data_mappings.push_back({data_mapping_t::index_t::locators, &private_locators, c_gaia_mem_locators_prefix});
+    data_mappings.push_back({data_mapping_t::index_t::locators, &shared_locators, c_gaia_mem_locators_prefix});
     data_mappings.push_back({data_mapping_t::index_t::counters, &shared_counters, c_gaia_mem_counters_prefix});
     data_mappings.push_back({data_mapping_t::index_t::data, &shared_data, c_gaia_mem_data_prefix});
     data_mappings.push_back({data_mapping_t::index_t::logs, &shared_logs, c_gaia_mem_logs_prefix});

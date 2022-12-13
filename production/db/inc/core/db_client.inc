@@ -168,6 +168,11 @@ mapped_data_t<locators_t>& client_t::private_locators()
     return s_session_context->private_locators;
 }
 
+mapped_data_t<locators_t>& client_t::shared_locators()
+{
+    return s_session_context->shared_locators;
+}
+
 mapped_data_t<data_t>& client_t::shared_data()
 {
     return s_session_context->shared_data;
@@ -176,4 +181,9 @@ mapped_data_t<data_t>& client_t::shared_data()
 std::vector<data_mapping_t>& client_t::data_mappings()
 {
     return s_session_context->data_mappings;
+}
+
+std::unordered_map<chunk_offset_t, chunk_version_t>& client_t::map_gc_chunks_to_versions()
+{
+    return s_session_context->map_gc_chunks_to_versions;
 }

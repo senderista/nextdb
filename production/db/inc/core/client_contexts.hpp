@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <vector>
+#include <unordered_map>
 
 #include "gaia_internal/db/db_types.hpp"
 
@@ -55,6 +56,7 @@ struct client_session_context_t
     // TODO: Consider moving locators segment into transaction context.
     // Unlike the other mappings, the locators segment is re-mapped for each transaction.
     mapped_data_t<locators_t> private_locators;
+    mapped_data_t<locators_t> shared_locators;
     mapped_data_t<counters_t> shared_counters;
     mapped_data_t<data_t> shared_data;
     mapped_data_t<logs_t> shared_logs;
@@ -67,6 +69,9 @@ struct client_session_context_t
     // The list of data mappings that we manage together.
     // The order of declarations must be the order of data_mapping_t::index_t values!
     std::vector<data_mapping_t> data_mappings;
+
+    // This is used by GC tasks on a session thread to cache chunk IDs for empty chunk deallocation.
+    std::unordered_map<chunk_offset_t, chunk_version_t> map_gc_chunks_to_versions;
 
     // REVIEW [GAIAPLAT-2068]: When we enable snapshot reuse across txns (by
     // applying the undo log from the previous txn to the existing snapshot and

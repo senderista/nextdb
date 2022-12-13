@@ -17,10 +17,6 @@ namespace gaia
 namespace db
 {
 
-void server_transaction_context_t::clear()
-{
-}
-
 void server_session_context_t::clear()
 {
     if (session_shutdown_eventfd != -1)

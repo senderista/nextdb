@@ -42,7 +42,6 @@ class client_t
      * @throws no_open_transaction_internal if there is no open transaction.
      */
     friend gaia::db::locators_t* gaia::db::get_locators();
-    friend gaia::db::txn_log_t* gaia::db::get_txn_log();
 
     /**
      * @throws no_open_session_internal if there is no open session.
@@ -57,7 +56,6 @@ class client_t
     friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
-    friend gaia::db::gaia_txn_id_t gaia::db::get_txn_id();
 
 public:
     // These functions are exported from gaia_internal/db/db.hpp.
@@ -71,10 +69,14 @@ public:
     static void rollback_transaction();
     static void commit_transaction();
 
+    // These functions are consumed by the gaia_ptr_t class.
+    static void log_txn_operation(
+        gaia_locator_t locator,
+        gaia_offset_t old_offset,
+        gaia_offset_t new_offset);
+
     // Internal version of begin_session(), called by public interface in db.hpp.
     static void begin_session();
-
-    static inline int get_session_socket_for_txn();
 
     // This returns a generator object for locators of a given type.
     static std::shared_ptr<common::iterators::generator_t<gaia_locator_t>>
@@ -86,6 +88,7 @@ public:
     static std::function<std::optional<T_element_type>()>
     get_stream_generator_for_socket(std::shared_ptr<int> stream_socket_ptr);
 
+private:
     // Called by internal code to verify preconditions.
     static inline void verify_txn_active();
     static inline void verify_no_txn();
@@ -93,10 +96,10 @@ public:
     static inline void verify_session_active();
     static inline void verify_no_session();
 
-private:
     // Context getters.
     static inline gaia_txn_id_t txn_id();
     static inline log_offset_t txn_log_offset();
+    static inline txn_log_t* txn_log();
     static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
 
     static inline int session_socket();
@@ -107,7 +110,7 @@ private:
     static inline std::unordered_map<chunk_offset_t, chunk_version_t>& map_gc_chunks_to_versions();
 
 private:
-    // We don't use an auto-pointer because its destructor is "non-trivial"
+    // We don't use unique_ptr because its destructor is "non-trivial"
     // and that would add overhead to the TLS implementation.
     thread_local static inline client_session_context_t* s_session_context{nullptr};
 
@@ -128,7 +131,7 @@ private:
         gaia_txn_id_t begin_ts, std::vector<std::pair<gaia_txn_id_t,
         log_offset_t>>& txn_ids_with_log_offsets_for_snapshot);
 
-    static void sort_log();
+    static void sort_log(txn_log_t* txn_log);
     static gaia_txn_id_t submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offset);
     static bool validate_txn(gaia_txn_id_t commit_ts);
     static bool txn_logs_conflict(log_offset_t offset1, log_offset_t offset2);

@@ -99,7 +99,7 @@ endif()
 
 # Default compiler/linker flags for Gaia targets.
 add_library(gaia_build_options INTERFACE)
-target_compile_options(gaia_build_options INTERFACE -Wall -Wextra -ftime-trace)
+target_compile_options(gaia_build_options INTERFACE -Wall -Wextra -Wunused -Wunreachable-code -ftime-trace)
 # Ensure Debug builds have the DEBUG macro defined.
 target_compile_definitions(gaia_build_options INTERFACE $<$<CONFIG:Debug>:DEBUG>)
 # Propagate the DISABLE_ASSERTS option to a macro definition.

@@ -311,11 +311,9 @@ void client_t::rollback_transaction()
     auto cleanup = make_scope_guard(txn_cleanup);
 
     // Free any deallocated objects.
-    // TODO: ensure that we deallocate this log offset on a crash.
-    txn_log_t* txn_log = get_txn_log();
 
     // Release ownership as precondition for GC.
-    bool success = txn_log->invalidate(txn_id());
+    bool success = txn_log()->invalidate(txn_id());
     ASSERT_POSTCONDITION(success, "Unsubmitted txn log cannot have any shared references!");
 
     // We don't need to go through the full GC path because this txn log was never submitted.
@@ -343,7 +341,7 @@ void client_t::commit_transaction()
 
     // This optimization to treat committing a read-only txn as a rollback
     // allows us to avoid any special cases for empty txn logs.
-    if (get_txn_log()->record_count == 0)
+    if (txn_log()->record_count == 0)
     {
         rollback_transaction();
         return;
@@ -353,7 +351,7 @@ void client_t::commit_transaction()
     auto cleanup = make_scope_guard(txn_cleanup);
 
     // Before registering the log, sort by locator for fast conflict detection.
-    sort_log();
+    sort_log(txn_log());
 
     // Obtain a safe_ts for our begin_ts, to prevent recursive validation from
     // allowing the pre-truncate watermark to advance past our begin_ts into the
@@ -511,11 +509,10 @@ void client_t::get_txn_log_offsets_for_snapshot(gaia_txn_id_t begin_ts,
 
 // Sort all txn log records by locator. This enables us to use fast binary
 // search and merge intersection algorithms for conflict detection.
-void client_t::sort_log()
+void client_t::sort_log(txn_log_t* txn_log)
 {
     // We use `log_record_t.sequence` as a secondary sort key to preserve the
     // temporal order of multiple updates to the same locator.
-    txn_log_t* txn_log = get_txn_log();
     std::sort(
         &txn_log->log_records[0],
         &txn_log->log_records[txn_log->record_count],
@@ -1441,4 +1438,25 @@ void client_t::release_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts)
     gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
     log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts);
     release_txn_log_reference(log_offset, begin_ts);
+}
+
+// Record a transactional operation in the txn log.
+void client_t::log_txn_operation(
+    gaia_locator_t locator,
+    gaia_offset_t old_offset,
+    gaia_offset_t new_offset)
+{
+    txn_log_t* txn_log = client_t::txn_log();
+    if (txn_log->record_count == c_max_log_records)
+    {
+        throw transaction_object_limit_exceeded_internal();
+    }
+
+    // Initialize the new record and increment the record count.
+    auto& lr = txn_log->log_records[txn_log->record_count++];
+    // The log record sequence should start at 0.
+    lr.sequence = txn_log->record_count - 1;
+    lr.locator = locator;
+    lr.old_offset = old_offset;
+    lr.new_offset = new_offset;
 }

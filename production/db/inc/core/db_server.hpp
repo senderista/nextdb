@@ -99,23 +99,16 @@ class server_t
     friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
     friend gaia::db::watermarks_t* get_watermarks();
     friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
-    friend gaia::db::txn_log_t* gaia::db::get_txn_log();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
-    friend gaia::db::gaia_txn_id_t gaia::db::get_txn_id();
 
 public:
     static void run(server_config_t server_conf);
 
 private:
     // Context getters.
-    static inline gaia_txn_id_t txn_id();
-    static inline log_offset_t txn_log_offset();
-    static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
-
     static inline int session_socket();
     static inline std::vector<std::thread>& session_owned_threads();
-    static inline std::unordered_map<chunk_offset_t, chunk_version_t>& map_gc_chunks_to_versions();
 
 private:
     // We don't use an auto-pointer because its destructor is "non-trivial"
@@ -165,10 +158,6 @@ private:
 
     // Session state transition handler functions.
     static void handle_connect(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
-    static void handle_begin_txn(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
-    static void handle_rollback_txn(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
-    static void handle_commit_txn(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
-    static void handle_decide_txn(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
     static void handle_client_shutdown(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
     static void handle_server_shutdown(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
     static void handle_request_stream(messages::session_event_t, const void*, messages::session_state_t, messages::session_state_t);
@@ -191,11 +180,6 @@ private:
     static inline constexpr valid_transition_t c_valid_transitions[] = {
         {messages::session_state_t::DISCONNECTED, messages::session_event_t::CONNECT, {messages::session_state_t::CONNECTED, handle_connect}},
         {messages::session_state_t::ANY, messages::session_event_t::CLIENT_SHUTDOWN, {messages::session_state_t::DISCONNECTED, handle_client_shutdown}},
-        {messages::session_state_t::CONNECTED, messages::session_event_t::BEGIN_TXN, {messages::session_state_t::TXN_IN_PROGRESS, handle_begin_txn}},
-        {messages::session_state_t::TXN_IN_PROGRESS, messages::session_event_t::ROLLBACK_TXN, {messages::session_state_t::CONNECTED, handle_rollback_txn}},
-        {messages::session_state_t::TXN_IN_PROGRESS, messages::session_event_t::COMMIT_TXN, {messages::session_state_t::TXN_COMMITTING, handle_commit_txn}},
-        {messages::session_state_t::TXN_COMMITTING, messages::session_event_t::DECIDE_TXN_COMMIT, {messages::session_state_t::CONNECTED, handle_decide_txn}},
-        {messages::session_state_t::TXN_COMMITTING, messages::session_event_t::DECIDE_TXN_ABORT, {messages::session_state_t::CONNECTED, handle_decide_txn}},
         {messages::session_state_t::ANY, messages::session_event_t::SERVER_SHUTDOWN, {messages::session_state_t::DISCONNECTED, handle_server_shutdown}},
         {messages::session_state_t::ANY, messages::session_event_t::REQUEST_STREAM, {messages::session_state_t::ANY, handle_request_stream}},
     };
@@ -243,56 +227,6 @@ private:
     static void start_stream_producer(
         int stream_socket,
         std::shared_ptr<common::iterators::generator_t<T_element>> generator);
-
-    static void get_txn_log_offsets_for_snapshot(
-        gaia_txn_id_t begin_ts,
-        std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_ids_with_log_offsets_for_snapshot);
-
-    static void release_txn_log_offsets_for_snapshot();
-
-    static void release_transaction_resources();
-
-    static void txn_begin();
-
-    static void txn_rollback(bool client_disconnected = false);
-
-    static bool txn_commit();
-
-    static void perform_maintenance();
-
-    static void apply_txn_logs_to_shared_view();
-
-    static void gc_applied_txn_logs();
-
-    static void update_post_gc_watermark();
-
-    static void truncate_txn_table();
-
-    static gaia_txn_id_t submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offset);
-
-    static bool txn_logs_conflict(log_offset_t offset_1, log_offset_t offset_2);
-
-    static void perform_pre_commit_work_for_txn();
-
-    static bool validate_txn(gaia_txn_id_t commit_ts);
-
-    static void validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
-
-    static void apply_txn_log_from_ts(gaia_txn_id_t commit_ts);
-
-    static void gc_txn_log_from_offset(log_offset_t offset, bool is_committed);
-
-    static void deallocate_txn_log(txn_log_t* txn_log, bool deallocate_new_offsets);
-
-    static void sort_log();
-
-    static void deallocate_object(gaia_offset_t offset);
-
-    static char* get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts);
-
-    static inline bool acquire_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
-
-    static inline void release_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
 };
 
 #include "db_server.inc"

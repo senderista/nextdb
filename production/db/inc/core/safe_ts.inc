@@ -50,8 +50,6 @@ void safe_ts_entries_t::release_safe_ts_index(size_t& index)
         index <= safe_ts_entries_t::c_max_safe_ts_index,
         "Expected this thread's safe_ts entry index to be valid!");
 
-    std::cerr << "std::size(m_safe_ts_reserved_indexes_bitmap): " << std::size(m_safe_ts_reserved_indexes_bitmap) << std::endl;
-
     ASSERT_PRECONDITION(
         is_bit_set(
             m_safe_ts_reserved_indexes_bitmap,

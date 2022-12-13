@@ -95,22 +95,3 @@ static gaia::db::memory_manager::chunk_manager_t* get_chunk_manager()
 {
     return &gaia::db::server_t::s_session_context->chunk_manager;
 }
-
-static gaia::db::txn_log_t* get_txn_log()
-{
-    log_offset_t txn_log_offset;
-    if (gaia::db::server_t::s_session_context && gaia::db::server_t::s_session_context->txn_context)
-    {
-        txn_log_offset = gaia::db::server_t::s_session_context->txn_context->txn_log_offset;
-    }
-    return get_logs()->get_log_from_offset(txn_log_offset);
-}
-
-static gaia::db::gaia_txn_id_t get_txn_id()
-{
-    if (gaia::db::server_t::s_session_context && gaia::db::server_t::s_session_context->txn_context)
-    {
-        return gaia::db::server_t::s_session_context->txn_context->txn_id;
-    }
-    return c_invalid_gaia_txn_id;
-}

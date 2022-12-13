@@ -21,11 +21,6 @@ gaia_txn_id_t client_t::get_current_txn_id()
     return txn_id();
 }
 
-int client_t::get_session_socket_for_txn()
-{
-    return session_socket();
-}
-
 void client_t::verify_txn_active()
 {
     if (!is_transaction_open())
@@ -156,6 +151,15 @@ gaia_txn_id_t client_t::txn_id()
 log_offset_t client_t::txn_log_offset()
 {
     return s_session_context->txn_context->txn_log_offset;
+}
+
+txn_log_t* client_t::txn_log()
+{
+    DEBUG_ASSERT_PRECONDITION(
+        s_session_context->txn_context->txn_log_offset.is_valid(),
+        "Invalid txn log offset!");
+
+    return get_logs()->get_log_from_offset(s_session_context->txn_context->txn_log_offset);
 }
 
 int client_t::session_socket()

@@ -43,7 +43,7 @@ public:
 struct client_session_context_t
 {
     // The transaction context.
-    std::shared_ptr<client_transaction_context_t> txn_context;
+    std::unique_ptr<client_transaction_context_t> txn_context;
 
     memory_manager::memory_manager_t memory_manager;
     memory_manager::chunk_manager_t chunk_manager;

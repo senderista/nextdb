@@ -62,7 +62,6 @@ add_library(gaia_db_client STATIC
   src/db_client.cpp
   src/exceptions.cpp
   src/gaia_ptr_api.cpp
-  src/gaia_ptr_client.cpp
   src/gaia_ptr.cpp
   src/memory_manager.cpp
   src/txn_metadata.cpp
@@ -101,7 +100,6 @@ set(GAIA_DB_SERVER_SOURCES
   src/chunk_manager.cpp
   src/db_server.cpp
   src/exceptions.cpp
-  src/gaia_ptr_server.cpp
   src/gaia_ptr.cpp
   src/memory_manager.cpp
   src/server_contexts.cpp

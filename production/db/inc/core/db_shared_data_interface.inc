@@ -40,9 +40,3 @@ static inline gaia::db::memory_manager::memory_manager_t* get_memory_manager();
 
 // Gets the chunk manager instance for the current thread or process.
 static inline gaia::db::memory_manager::chunk_manager_t* get_chunk_manager();
-
-// Gets the transaction log for the current session thread.
-static inline gaia::db::txn_log_t* get_txn_log();
-
-// Gets the transaction ID for the current session thread.
-static inline gaia::db::gaia_txn_id_t get_txn_id();

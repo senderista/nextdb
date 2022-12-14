@@ -672,9 +672,6 @@ void server_t::session_handler(int socket)
     bool initializing = false;
     init_memory_manager(initializing);
 
-    // Initialize thread-local data for safe timestamp mechanism.
-    safe_ts_t::initialize(get_safe_ts_entries(), get_watermarks());
-
     // Set up epoll loop.
     int epoll_fd = ::epoll_create1(0);
     if (epoll_fd == -1)

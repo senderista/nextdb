@@ -11,6 +11,7 @@
 #include "gaia/common.hpp"
 
 #include "gaia_internal/common/assert.hpp"
+#include "gaia_internal/common/debug_assert.hpp"
 #include "gaia_internal/common/bitmap.hpp"
 #include "gaia_internal/db/db.hpp"
 #include "gaia_internal/db/db_types.hpp"
@@ -165,11 +166,17 @@ private:
 
     thread_local static inline size_t s_safe_ts_entries_index{safe_ts_entries_t::c_invalid_safe_ts_index};
 
-    // We keep this vector sorted for fast searches. We add entries by appending
-    // them and remove entries by swapping them with the tail. This is a pointer
-    // rather than an inline object due to performance issues with nontrivial
-    // TLS objects.
+    // We store entries in a stack to preserve RAII semantics (we push the
+    // encapsulated timestamp onto the stack in the constructor and pop it from
+    // the stack in the destructor).
+    // This is a pointer rather than an inline object due to performance issues
+    // with nontrivial TLS objects.
     thread_local static inline std::vector<gaia_txn_id_t>* s_safe_ts_values_ptr{nullptr};
+
+    // To minimize scans for the minimum timestamp, we store the minimum
+    // timestamp separately. There are no concurrency concerns since all static
+    // variables of this class are thread-local.
+    thread_local static inline gaia_txn_id_t s_min_safe_ts_value{c_invalid_gaia_txn_id};
 
     // To avoid circular dependencies, each thread must explicitly initialize
     // the class with pointers to safe_ts_entries_t and watermarks_t objects.
@@ -179,6 +186,18 @@ private:
     // We need to give safe_watermark_t access to a thread-local watermarks_t
     // object, and this seems like the simplest way to do it.
     friend class safe_watermark_t;
+
+private:
+    // For use only in debug asserts.
+    static inline bool validate_saved_minimum()
+    {
+        auto min_safe_ts = s_safe_ts_values_ptr->empty() ?
+            c_invalid_gaia_txn_id :
+            *std::min_element(
+                s_safe_ts_values_ptr->begin(),
+                s_safe_ts_values_ptr->end());
+        return (min_safe_ts == s_min_safe_ts_value);
+    }
 };
 
 // This class can be used in place of safe_ts_t, when the "safe timestamp"
@@ -203,7 +222,7 @@ public:
 private:
     // This member is logically immutable, but it cannot be `const`, because
     // the constructor needs to move a local variable into it.
-    safe_ts_t m_safe_ts;
+    safe_ts_t m_safe_ts{};
 };
 
 #include "safe_ts.inc"

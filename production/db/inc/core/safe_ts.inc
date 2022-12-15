@@ -200,6 +200,9 @@ void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
 
 void safe_ts_t::initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* watermarks)
 {
+    ASSERT_PRECONDITION(s_min_safe_ts_value == c_invalid_gaia_txn_id,
+        "Saved minimum timestamp should be invalid at initialization!");
+
     // Cache pointers to thread-local safe_ts_entries_t and watermarks_t objects.
     s_safe_ts_entries_ptr = safe_ts_entries;
     s_watermarks_ptr = watermarks;
@@ -237,6 +240,7 @@ void safe_ts_t::finalize()
 
     delete s_safe_ts_values_ptr;
     s_safe_ts_values_ptr = nullptr;
+    s_min_safe_ts_value = c_invalid_gaia_txn_id;
 
     // Release this thread's safe_ts entries index.
     ASSERT_PRECONDITION(s_safe_ts_entries_index <= safe_ts_entries_t::c_max_safe_ts_index,
@@ -348,30 +352,37 @@ gaia_txn_id_t safe_ts_t::get_safe_truncation_ts()
 safe_ts_t::safe_ts_t(gaia_txn_id_t safe_ts)
     : m_ts(safe_ts)
 {
-    ASSERT_PRECONDITION(s_safe_ts_values_ptr, "Expected safe_ts entries to be allocated!");
+    ASSERT_PRECONDITION(s_safe_ts_entries_ptr, "Expected safe_ts entries to be allocated!");
     ASSERT_PRECONDITION(s_safe_ts_values_ptr, "Expected safe_ts stack to be allocated!");
 
-    // If safe_ts is the minimum element in the safe_ts array, then
-    // replace this thread's reserved safe_ts entry.
-    bool is_new_min_safe_ts = true;
-    if (!s_safe_ts_values_ptr->empty())
+    // To simplify the safe_watermark_t implementation, we allow safe_ts to be
+    // invalid. The destructor will be a no-op in this case.
+    if (!safe_ts.is_valid())
     {
-        is_new_min_safe_ts = (safe_ts < (*s_safe_ts_values_ptr)[0]);
+        return;
     }
 
-    if (is_new_min_safe_ts)
+    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at start of constructor!");
+
+    // If safe_ts is the minimum element in the safe_ts stack, then
+    // replace this thread's reserved safe_ts entry.
+    ASSERT_INVARIANT(s_safe_ts_values_ptr->empty() || s_min_safe_ts_value.is_valid(),
+        "Minimum timestamp must be valid if stack is non-empty!");
+    if (!s_min_safe_ts_value.is_valid() || safe_ts < s_min_safe_ts_value)
     {
         if (!s_safe_ts_entries_ptr->reserve_safe_ts(s_safe_ts_entries_index, safe_ts, s_watermarks_ptr))
         {
             // Force the client to handle the validation failure.
             throw safe_ts_failure();
         }
+        s_min_safe_ts_value = safe_ts;
     }
 
-    // We have successfully reserved the new safe_ts if necessary, so
-    // add the new safe_ts to the sorted array of safe_ts values.
+    // We have successfully reserved the new safe_ts if necessary, so push the
+    // new safe_ts onto the stack of safe_ts values.
     s_safe_ts_values_ptr->push_back(safe_ts);
-    std::sort(s_safe_ts_values_ptr->begin(), s_safe_ts_values_ptr->end());
+
+    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at end of constructor!");
 }
 
 safe_ts_t::safe_ts_t(safe_ts_t&& other) noexcept
@@ -398,51 +409,55 @@ safe_ts_t::~safe_ts_t()
         return;
     }
 
+    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at start of destructor!");
+
     // The destructor cannot fail, so we need to ensure that all
     // consistency conditions we already satisfied still hold.
     ASSERT_INVARIANT(s_safe_ts_entries_ptr, "Expected pointer to safe_ts entries to be set!");
     ASSERT_INVARIANT(s_safe_ts_values_ptr, "Expected safe_ts stack to be allocated!");
     ASSERT_INVARIANT(!s_safe_ts_values_ptr->empty(), "Expected safe_ts stack to be non-empty!");
 
+    // Pop the safe_ts from the safe_ts stack.
+    ASSERT_INVARIANT(m_ts == s_safe_ts_values_ptr->back(), "Timestamp must be at the top of the stack!");
+    s_safe_ts_values_ptr->pop_back();
+
     // First handle the case where our safe_ts was the only value in the
-    // safe_ts array.
-    if (s_safe_ts_values_ptr->size() == 1)
+    // safe_ts stack.
+    if (s_safe_ts_values_ptr->empty())
     {
+        ASSERT_INVARIANT(m_ts == s_min_safe_ts_value,
+            "Timestamp must be the minimum if it is the only timestamp in the stack!");
+        // Invalidate the saved minimum.
+        s_min_safe_ts_value = c_invalid_gaia_txn_id;
         // Release this thread's reserved safe_ts value.
         s_safe_ts_entries_ptr->release_safe_ts(s_safe_ts_entries_index, s_watermarks_ptr);
-        // Remove the last element from the safe_ts array.
-        s_safe_ts_values_ptr->pop_back();
         return;
     }
 
-    // Save the current minimum safe_ts value.
-    gaia_txn_id_t prev_min_ts = (*s_safe_ts_values_ptr)[0];
-    // Because our safe_ts array is sorted, we can use binary search to
-    // find the index of our safe_ts.
-    auto it = std::lower_bound(s_safe_ts_values_ptr->begin(), s_safe_ts_values_ptr->end(), m_ts);
-    ASSERT_INVARIANT(*it == m_ts, "Cannot find this timestamp in the safe_ts array!");
-    // Move the last element into our entry.
-    *it = std::move(s_safe_ts_values_ptr->back());
-    // Remove the moved last element.
-    s_safe_ts_values_ptr->pop_back();
-    // Restore sorted order.
-    std::sort(s_safe_ts_values_ptr->begin(), s_safe_ts_values_ptr->end());
-
-    // If the minimum safe_ts has changed, then we need to replace the
-    // published safe_ts value.
-    gaia_txn_id_t new_min_ts = (*s_safe_ts_values_ptr)[0];
-    if (new_min_ts != prev_min_ts)
+    // If our safe_ts was the minimum value in the stack, then calculate the new
+    // minimum and replace the published safe_ts value if the minimum changed.
+    ASSERT_INVARIANT(m_ts >= s_min_safe_ts_value, "Timestamp cannot be smaller than the minimum timestamp!");
+    if (m_ts == s_min_safe_ts_value)
     {
-        ASSERT_INVARIANT(
-            new_min_ts > prev_min_ts,
-            "The new minimum safe_ts must be larger than the previous minimum safe_ts!");
-        bool reservation_succeeded = s_safe_ts_entries_ptr->reserve_safe_ts(
-            s_safe_ts_entries_index, (*s_safe_ts_values_ptr)[0], s_watermarks_ptr);
-        // The new minimum safe_ts was protected by the previous minimum
-        // safe_ts from falling behind the pre-truncate watermark, so
-        // its reservation must succeed.
-        ASSERT_INVARIANT(reservation_succeeded, "Reservation of new minimum safe_ts cannot fail!");
+        auto min_safe_ts = *std::min_element(s_safe_ts_values_ptr->begin(), s_safe_ts_values_ptr->end());
+        ASSERT_INVARIANT(min_safe_ts >= s_min_safe_ts_value,
+            "The new minimum timestamp cannot be smaller than the previous minimum timestamp!");
+        if (min_safe_ts > s_min_safe_ts_value)
+        {
+            // Update the saved minimum timestamp.
+            s_min_safe_ts_value = min_safe_ts;
+
+            // Reserve the new minimum timestamp.
+            bool reservation_succeeded = s_safe_ts_entries_ptr->reserve_safe_ts(
+                s_safe_ts_entries_index, min_safe_ts, s_watermarks_ptr);
+            // The new minimum safe_ts was protected by the previous minimum
+            // safe_ts from falling behind the pre-truncate watermark, so
+            // its reservation must succeed.
+            ASSERT_INVARIANT(reservation_succeeded, "Reservation of new minimum safe_ts cannot fail!");
+        }
     }
+
+    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at end of destructor!");
 }
 
 // The constructor reads the current value of the given watermark, and

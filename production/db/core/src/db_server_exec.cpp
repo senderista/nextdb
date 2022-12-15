@@ -71,15 +71,12 @@ static server_config_t::persistence_mode_t parse_persistence_mode(std::string pe
 
 static server_config_t process_command_line(int argc, char* argv[])
 {
-    std::set<std::string> used_params;
-
     server_config_t::persistence_mode_t persistence_mode{server_config_t::c_default_persistence_mode};
     std::string instance_name;
     std::string data_dir;
 
     for (int i = 1; i < argc; ++i)
     {
-        used_params.insert(argv[i]);
         if (strcmp(argv[i], c_help_param) == 0)
         {
             usage();

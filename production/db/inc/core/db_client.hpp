@@ -20,12 +20,11 @@
 #include "gaia_internal/common/debug_assert.hpp"
 #include "gaia_internal/common/generator_iterator.hpp"
 #include "gaia_internal/common/mmap_helpers.hpp"
+#include "gaia_internal/common/socket_helpers.hpp"
 #include "gaia_internal/db/gaia_ptr.hpp"
 #include "gaia_internal/exceptions.hpp"
 
 #include "client_contexts.hpp"
-#include "client_messenger.hpp"
-#include "messages_generated.h"
 #include "safe_ts.hpp"
 
 namespace gaia

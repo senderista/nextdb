@@ -14,7 +14,6 @@
 #include <thread>
 #include <unordered_set>
 
-#include <flatbuffers/flatbuffers.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -33,9 +32,7 @@
 using namespace gaia::common;
 using namespace gaia::db;
 using namespace gaia::db::memory_manager;
-using namespace gaia::db::messages;
 using namespace gaia::db::transactions;
-using namespace flatbuffers;
 using namespace scope_guard;
 
 static constexpr char c_message_validating_txn_should_have_been_validated_before_log_invalidation[]
@@ -44,17 +41,6 @@ static constexpr char c_message_validating_txn_should_have_been_validated_before
     = "A possibly conflicting txn can only have its log invalidated if the committing transaction was concurrently validated!";
 static constexpr char c_message_preceding_txn_should_have_been_validated[]
     = "A transaction with commit timestamp preceding this transaction's begin timestamp is undecided!";
-
-static void build_client_request(
-    FlatBufferBuilder& builder,
-    session_event_t event)
-{
-    builder.ForceDefaults(true);
-    flatbuffers::Offset<client_request_t> client_request;
-    client_request = Createclient_request_t(builder, event);
-    auto message = Createmessage_t(builder, any_message_t::request, client_request.Union());
-    builder.Finish(message);
-}
 
 void client_t::txn_cleanup()
 {
@@ -118,6 +104,9 @@ int client_t::get_session_socket(const std::string& socket_name)
 // and would be difficult to handle properly even if it were possible.
 // In any case, send_msg_with_fds()/recv_msg_with_fds() already throws a
 // peer_disconnected exception when the other end of the socket is closed.
+// The simplest asynchronous notification mechanism might be a flag in shared
+// memory (either global or per-session), which the client could cheaply check
+// before performing any transactional operation.
 void client_t::begin_session()
 {
     // Fail if a session already exists on this thread.
@@ -141,56 +130,47 @@ void client_t::begin_session()
         ASSERT_INVARIANT(!data_mapping.is_set(), "Segment is already mapped!");
     }
 
-    // Connect to the server's well-known socket name, and ask it
-    // for the data and locator shared memory segment fds.
+    // Connect to the server's well-known socket name, and receive fds for the
+    // shared-memory mappings.
+    int received_fds[static_cast<size_t>(data_mapping_t::index_t::count_mappings)];
+    size_t received_fd_count = std::size(received_fds);
+    uint64_t magic{};
     try
     {
         s_session_context->session_socket = get_session_socket(c_default_instance_name);
+        // A `peer_disconnected` exception implies that either authentication
+        // failed or the session limit was exceeded.
+        // REVIEW: distinguish authentication failure from "session limit exceeded"
+        // (authentication failure will also result in ECONNRESET, but
+        // authentication is currently disabled in the server).
+        recv_msg_with_fds(
+            session_socket(), received_fds, &received_fd_count, &magic, sizeof(magic));
+        ASSERT_POSTCONDITION(magic == c_session_magic, "Session magic cookie has unexpected value!");
+    }
+    catch (const peer_disconnected& e)
+    {
+        throw server_connection_failed_internal(e.what());
     }
     catch (const system_error& e)
     {
         throw server_connection_failed_internal(e.what(), e.get_errno());
     }
 
-    // Send the server the connection request.
-    FlatBufferBuilder builder;
-    build_client_request(builder, session_event_t::CONNECT);
-
-    client_messenger_t client_messenger;
-
-    // If we receive ECONNRESET from the server, we assume that the session
-    // limit was exceeded.
-    // REVIEW: distinguish authentication failure from "session limit exceeded"
-    // (authentication failure will also result in ECONNRESET, but
-    // authentication is currently disabled in the server).
-    try
-    {
-        client_messenger.send_and_receive(
-            session_socket(), nullptr, 0, builder,
-            static_cast<size_t>(data_mapping_t::index_t::count_mappings));
-    }
-    catch (const gaia::common::peer_disconnected&)
-    {
-        throw session_limit_exceeded_internal();
-    }
-
     // Set up scope guards for the fds.
     // The locators fd needs to be kept around, so its scope guard will be dismissed at the end of this scope.
     // The other fds are not needed, so they'll get their own scope guard to clean them up.
-    int fd_locators = client_messenger.received_fd(static_cast<size_t>(data_mapping_t::index_t::locators));
+    int fd_locators = received_fds[static_cast<size_t>(data_mapping_t::index_t::locators)];
     auto cleanup_fd_locators = make_scope_guard([&fd_locators] { close_fd(fd_locators); });
     auto cleanup_fd_others = make_scope_guard([&] {
         for (const auto& data_mapping : data_mappings())
         {
             if (data_mapping.mapping_index != data_mapping_t::index_t::locators)
             {
-                int fd = client_messenger.received_fd(static_cast<size_t>(data_mapping.mapping_index));
+                int fd = received_fds[static_cast<size_t>(data_mapping.mapping_index)];
                 close_fd(fd);
             }
-        } });
-
-    session_event_t event = client_messenger.server_reply()->event();
-    ASSERT_INVARIANT(event == session_event_t::CONNECT, c_message_unexpected_event_received);
+        }
+    });
 
     // Set up the shared-memory mappings.
     // The locators mapping will be performed manually, so skip its information in the mapping table.
@@ -198,7 +178,7 @@ void client_t::begin_session()
     {
         if (data_mapping.mapping_index != data_mapping_t::index_t::locators)
         {
-            int fd = client_messenger.received_fd(static_cast<size_t>(data_mapping.mapping_index));
+            int fd = received_fds[static_cast<size_t>(data_mapping.mapping_index)];
             data_mapping.open(fd);
         }
     }
@@ -235,6 +215,7 @@ void client_t::end_session()
         // Clean up thread-local data for safe timestamp mechanism.
         // This MUST be called *before* cleaning up session context!
         safe_ts_t::finalize();
+        // The session_context destructor will close the session socket.
         delete s_session_context;
         s_session_context = nullptr;
     });

@@ -24,40 +24,11 @@ set(GAIA_DB_CORE_PRIVATE_INCLUDES
 message(VERBOSE "GAIA_DB_CORE_PRIVATE_INCLUDES=${GAIA_DB_CORE_PRIVATE_INCLUDES}")
 
 ###############################################
-# Generate flatbuffers headers.
-###############################################
-set(GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-
-# The names of the following source files should be unique because they'll be used as targets.
-set(FBS_SOURCES
-  "${PROJECT_SOURCE_DIR}/src/flatbuffers/messages.fbs"
-)
-
-set(FBS_SOURCE_FILENAMES "")
-foreach(FBS_SOURCE ${FBS_SOURCES})
-  get_filename_component(FBS_SOURCE_FILENAME ${FBS_SOURCE} NAME)
-  string(REGEX REPLACE "\\.fbs$" "_generated.h" GEN_HEADER ${FBS_SOURCE_FILENAME})
-
-  add_custom_command(
-    COMMENT "Compiling ${FBS_SOURCE} with flatbuffers..."
-    OUTPUT "${GEN_DIR}/${GEN_HEADER}"
-    COMMAND cmake -E make_directory "${GEN_DIR}"
-    COMMAND ${FLATBUFFERS_BIN}/flatc --cpp --scoped-enums -o "${GEN_DIR}" "${FBS_SOURCE}"
-    DEPENDS "${FBS_SOURCE}"
-    DEPENDS flatc
-    VERBATIM)
-
-  add_custom_target(${FBS_SOURCE_FILENAME} ALL DEPENDS "${GEN_DIR}/${GEN_HEADER}")
-  list(APPEND FBS_SOURCE_FILENAMES ${FBS_SOURCE_FILENAME})
-endforeach(FBS_SOURCE)
-
-###############################################
 # Database-related code begins here.
 ###############################################
 add_library(gaia_db_client STATIC
   src/chunk_manager.cpp
   src/client_contexts.cpp
-  src/client_messenger.cpp
   src/db_client_api.cpp
   src/db_client.cpp
   src/exceptions.cpp
@@ -67,7 +38,6 @@ add_library(gaia_db_client STATIC
   src/txn_metadata.cpp
 )
 
-add_dependencies(gaia_db_client ${FBS_SOURCE_FILENAMES})
 configure_gaia_target(gaia_db_client)
 target_include_directories(gaia_db_client PUBLIC ${GAIA_DB_CORE_PUBLIC_INCLUDES})
 target_include_directories(gaia_db_client PRIVATE ${GAIA_DB_CORE_PRIVATE_INCLUDES})
@@ -76,10 +46,6 @@ target_link_libraries(gaia_db_client PRIVATE ${LIB_EXPLAIN} ${LIB_CAP} dl)
 
 # Suppress spurious warnings about zero-initialized structs.
 target_compile_options(gaia_db_client PRIVATE -Wno-missing-field-initializers)
-
-# For flatbuffers generated code.
-target_include_directories(gaia_db_client SYSTEM PRIVATE "${FLATBUFFERS_INC}")
-target_include_directories(gaia_db_client SYSTEM PRIVATE "${GEN_DIR}")
 
 # libstdc++ apparently needs libatomic for struct last_allocation_metadata_t, even though it's 8 bytes.
 target_link_libraries(gaia_db_client PRIVATE atomic)
@@ -102,22 +68,16 @@ set(GAIA_DB_SERVER_SOURCES
   src/exceptions.cpp
   src/gaia_ptr.cpp
   src/memory_manager.cpp
-  src/server_contexts.cpp
   src/txn_metadata.cpp
 )
 
 add_library(gaia_db_server ${GAIA_DB_SERVER_SOURCES})
 # Add GAIA_DB_SERVER preprocessor definition for conditional includes.
 target_compile_definitions(gaia_db_server PUBLIC GAIA_DB_SERVER=1)
-add_dependencies(gaia_db_server ${FBS_SOURCE_FILENAMES})
 configure_gaia_target(gaia_db_server)
 target_include_directories(gaia_db_server PUBLIC
   "${GAIA_DB_CORE_PUBLIC_INCLUDES}"
   "${GAIA_DB_CORE_PRIVATE_INCLUDES}")
-
-# For flatbuffers generated code.
-target_include_directories(gaia_db_server SYSTEM PUBLIC "${FLATBUFFERS_INC}")
-target_include_directories(gaia_db_server SYSTEM PUBLIC "${GEN_DIR}")
 
 # libstdc++ apparently needs libatomic for struct last_allocation_metadata_t, even though it's 8 bytes.
 target_link_libraries(gaia_db_server PRIVATE atomic)

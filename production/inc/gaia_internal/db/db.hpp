@@ -45,5 +45,8 @@ constexpr size_t c_session_limit{1UL << 7};
 // This is arbitrary but seems like a reasonable starting point (pending benchmarks).
 constexpr size_t c_stream_batch_size{1UL << 10};
 
+// We use this as the dummy payload of a session reply message from the server.
+constexpr uint64_t c_session_magic{0xcafebabedecafbad};
+
 } // namespace db
 } // namespace gaia

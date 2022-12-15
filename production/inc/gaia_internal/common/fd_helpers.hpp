@@ -113,6 +113,18 @@ inline bool is_fd_regular_file(int fd)
     return S_ISREG(st.st_mode);
 }
 
+inline bool is_fd_socket(int fd)
+{
+    struct stat st;
+    if (-1 == ::fstat(fd, &st))
+    {
+        int err = errno;
+        const char* reason = ::explain_fstat(fd, &st);
+        throw system_error(reason, err);
+    }
+    return S_ISSOCK(st.st_mode);
+}
+
 inline void close_fd(int& fd)
 {
     if (fd != -1)

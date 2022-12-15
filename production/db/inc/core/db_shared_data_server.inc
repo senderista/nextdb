@@ -86,12 +86,14 @@ static gaia::db::safe_ts_entries_t* get_safe_ts_entries()
     return gaia::db::server_t::s_shared_safe_ts_entries.data();
 }
 
+// This is currently never used, so we just return nullptr to avoid changing the interface.
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()
 {
-    return &gaia::db::server_t::s_session_context->memory_manager;
+    return nullptr;
 }
 
+// This is currently never used, so we just return nullptr to avoid changing the interface.
 static gaia::db::memory_manager::chunk_manager_t* get_chunk_manager()
 {
-    return &gaia::db::server_t::s_session_context->chunk_manager;
+    return nullptr;
 }

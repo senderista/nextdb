@@ -77,11 +77,11 @@ function(configure_gaia_target TARGET)
     # Keep this property PRIVATE to avoid leaking it into dependent targets.
     # REVIEW: Listing alternative profiling options for trial-and-error
     # evaluation. Only `-pg` is supported by gcc, while the other 2 options are
-    # supported by clang, so if we decide to internally support gcc, we could use
-    # that option when gcc is the configured compiler.
-    target_compile_options(${TARGET} PRIVATE -finstrument-functions)
+    # supported by clang.
+    # REVIEW: Only `-pg` seems to avoid bus errors, so making that the default option.
+    target_compile_options(${TARGET} PRIVATE -pg)
+    # target_compile_options(${TARGET} PRIVATE -finstrument-functions)
     # target_compile_options(${TARGET} PRIVATE -fxray-instrument)
-    # target_compile_options(${TARGET} PRIVATE -pg)
   endif(ENABLE_PROFILING_SUPPORT)
 endfunction(configure_gaia_target)
 

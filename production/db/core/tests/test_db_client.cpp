@@ -11,6 +11,7 @@
 #include "gaia/db/db.hpp"
 #include "gaia/exceptions.hpp"
 
+#include "gaia_internal/db/db.hpp"
 #include "gaia_internal/db/gaia_ptr.hpp"
 
 #include "db_test_base.hpp"
@@ -19,9 +20,6 @@ using namespace gaia::db;
 using namespace gaia::common;
 
 // NOTE: This test is used to test lower level DB client and 'gaia_ptr_t' APIs.
-
-// duplicated from production/db/inc/core/db_server.hpp
-constexpr size_t c_stream_batch_size = 1 << 10;
 
 void print_payload(std::ostream& o, size_t size, const char* payload)
 {

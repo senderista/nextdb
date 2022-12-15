@@ -81,6 +81,42 @@ static gaia::db::type_index_t* get_type_index()
     return gaia::db::client_t::s_session_context->shared_type_index.data();
 }
 
+static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
+{
+    // Since we don't use this accessor in the client itself, we can assert that
+    // it is always non-null (since callers should never be able to observe it
+    // in its null state, i.e., with the txn_metadata segment unmapped).
+    DEBUG_ASSERT_PRECONDITION(
+        gaia::db::client_t::s_session_context && gaia::db::client_t::s_session_context->shared_txn_metadata.is_set(),
+        "Txn metadata not mapped!");
+
+    return gaia::db::client_t::s_session_context->shared_txn_metadata.data();
+}
+
+static gaia::db::watermarks_t* get_watermarks()
+{
+    // Since we don't use this accessor in the client itself, we can assert that
+    // it is always non-null (since callers should never be able to observe it
+    // in its null state, i.e., with the watermarks segment unmapped).
+    DEBUG_ASSERT_PRECONDITION(
+        gaia::db::client_t::s_session_context && gaia::db::client_t::s_session_context->shared_watermarks.is_set(),
+        "Watermarks not mapped!");
+
+    return gaia::db::client_t::s_session_context->shared_watermarks.data();
+}
+
+static gaia::db::safe_ts_entries_t* get_safe_ts_entries()
+{
+    // Since we don't use this accessor in the client itself, we can assert that
+    // it is always non-null (since callers should never be able to observe it
+    // in its null state, i.e., with the safe_ts_entries segment unmapped).
+    DEBUG_ASSERT_PRECONDITION(
+        gaia::db::client_t::s_session_context && gaia::db::client_t::s_session_context->shared_safe_ts_entries.is_set(),
+        "safe_ts entries not mapped!");
+
+    return gaia::db::client_t::s_session_context->shared_safe_ts_entries.data();
+}
+
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()
 {
     return &gaia::db::client_t::s_session_context->memory_manager;
@@ -89,29 +125,4 @@ static gaia::db::memory_manager::memory_manager_t* get_memory_manager()
 static gaia::db::memory_manager::chunk_manager_t* get_chunk_manager()
 {
     return &gaia::db::client_t::s_session_context->chunk_manager;
-}
-
-static gaia::db::txn_log_t* get_txn_log_from_offset(gaia::db::log_offset_t offset)
-{
-    DEBUG_ASSERT_PRECONDITION(offset.is_valid(), "Txn log offset is invalid!");
-
-    gaia::db::logs_t* logs = get_logs();
-    return &((*logs)[offset]);
-}
-
-static gaia::db::txn_log_t* get_txn_log()
-{
-    // Since we don't use this accessor in the client itself, we can assert that
-    // it is always non-null (since callers should never be able to observe it
-    // in its null state, i.e., with the id_index segment unmapped).
-    DEBUG_ASSERT_PRECONDITION(
-        gaia::db::client_t::s_session_context->txn_context->txn_log_offset.is_valid(),
-        "Invalid txn log offset!");
-
-    return get_txn_log_from_offset(gaia::db::client_t::s_session_context->txn_context->txn_log_offset);
-}
-
-static gaia::db::gaia_txn_id_t get_txn_id()
-{
-    return gaia::db::client_t::s_session_context->txn_context->txn_id;
 }

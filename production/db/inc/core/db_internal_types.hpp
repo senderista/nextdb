@@ -18,6 +18,7 @@
 #include "gaia/common.hpp"
 
 #include "gaia_internal/common/assert.hpp"
+#include "gaia_internal/common/bitmap.hpp"
 #include "gaia_internal/common/mmap_helpers.hpp"
 #include "gaia_internal/db/db_object.hpp"
 #include "gaia_internal/db/db_types.hpp"
@@ -70,9 +71,9 @@ constexpr char c_gaia_mem_data_prefix[] = "gaia_mem_data_";
 constexpr char c_gaia_mem_logs_prefix[] = "gaia_mem_logs_";
 constexpr char c_gaia_mem_id_index_prefix[] = "gaia_mem_id_index_";
 constexpr char c_gaia_mem_type_index_prefix[] = "gaia_mem_type_index_";
-
-constexpr char c_gaia_mem_txn_log_prefix[] = "gaia_mem_txn_log_";
-constexpr char c_gaia_internal_txn_log_prefix[] = "gaia_internal_txn_log_";
+constexpr char c_gaia_mem_txn_metadata_prefix[] = "gaia_mem_txn_metadata_";
+constexpr char c_gaia_mem_watermarks_prefix[] = "gaia_mem_watermarks_";
+constexpr char c_gaia_mem_safe_ts_entries_prefix[] = "gaia_mem_safe_ts_entries_";
 
 #if __has_feature(thread_sanitizer)
 // We set the maximum number of locators (including the reserved "invalid"
@@ -289,123 +290,49 @@ struct txn_log_t
     static constexpr uint64_t c_txn_log_refcount_shift{common::c_uint64_bit_count - c_txn_log_refcount_bit_width};
     static constexpr uint64_t c_txn_log_refcount_mask{((1UL << c_txn_log_refcount_bit_width) - 1) << c_txn_log_refcount_shift};
 
-    static gaia_txn_id_t begin_ts_from_word(uint64_t word)
+    inline static gaia_txn_id_t begin_ts_from_word(uint64_t word)
     {
         return gaia_txn_id_t{(word & transactions::txn_metadata_entry_t::c_txn_ts_mask) >> transactions::txn_metadata_entry_t::c_txn_ts_shift};
     }
 
-    static size_t refcount_from_word(uint64_t word)
+    inline static size_t refcount_from_word(uint64_t word)
     {
         return static_cast<size_t>((word & c_txn_log_refcount_mask) >> c_txn_log_refcount_shift);
     }
 
-    static uint64_t word_from_begin_ts_and_refcount(gaia_txn_id_t begin_ts, size_t refcount)
+    inline static uint64_t word_from_begin_ts_and_refcount(gaia_txn_id_t begin_ts, size_t refcount)
     {
         ASSERT_PRECONDITION(begin_ts.is_valid(), "Begin timestamp must be valid!");
         ASSERT_PRECONDITION(refcount < (1 << c_txn_log_refcount_bit_width), "Reference count must fit in 16 bits!");
         return (begin_ts << transactions::txn_metadata_entry_t::c_txn_ts_shift) | (refcount << c_txn_log_refcount_shift);
     }
 
-    gaia_txn_id_t begin_ts() const
+    inline gaia_txn_id_t begin_ts() const
     {
         return begin_ts_from_word(begin_ts_with_refcount);
     }
 
-    size_t reference_count() const
+    inline size_t reference_count() const
     {
         return refcount_from_word(begin_ts_with_refcount);
     }
 
-    void set_begin_ts(gaia_txn_id_t begin_ts)
-    {
-        // We should only call this on a newly allocated log offset.
-        uint64_t old_begin_ts_with_refcount = begin_ts_with_refcount;
-        ASSERT_PRECONDITION(
-            old_begin_ts_with_refcount == 0,
-            "Cannot call set_begin_ts() on an initialized txn log header!");
-
-        uint64_t new_begin_ts_with_refcount = word_from_begin_ts_and_refcount(begin_ts, 0);
-        bool has_set_value = begin_ts_with_refcount.compare_exchange_strong(old_begin_ts_with_refcount, new_begin_ts_with_refcount);
-        ASSERT_POSTCONDITION(has_set_value, "set_begin_ts() should only be called when txn log offset is exclusively owned!");
-    }
+    // Sets the owning txn ID for this log.
+    inline void set_begin_ts(gaia_txn_id_t begin_ts);
 
     // Returns false if the owning txn (begin_ts) changed, true otherwise.
-    inline bool acquire_reference(gaia_txn_id_t begin_ts)
-    {
-        ASSERT_PRECONDITION(begin_ts.is_valid(), "acquire_reference() must be called with a valid begin_ts!");
-        while (true)
-        {
-            uint64_t old_begin_ts_with_refcount = begin_ts_with_refcount;
-
-            // Return failure if ownership of this txn log has changed.
-            if (begin_ts != begin_ts_from_word(old_begin_ts_with_refcount))
-            {
-                return false;
-            }
-
-            size_t refcount = refcount_from_word(old_begin_ts_with_refcount);
-            uint64_t new_begin_ts_with_refcount = word_from_begin_ts_and_refcount(begin_ts, ++refcount);
-
-            if (begin_ts_with_refcount.compare_exchange_strong(old_begin_ts_with_refcount, new_begin_ts_with_refcount))
-            {
-                break;
-            }
-        }
-
-        return true;
-    }
+    inline bool acquire_reference(gaia_txn_id_t begin_ts);
 
     // Releasing a reference must always succeed because the refcount can't be
     // zero and the txn log offset can't be reused until all references are
     // released.
     // We pass the original begin_ts only to be able to check invariants.
-    inline void release_reference(gaia_txn_id_t begin_ts)
-    {
-        ASSERT_PRECONDITION(begin_ts.is_valid(), "release_reference() must be called with a valid begin_ts!");
-        while (true)
-        {
-            uint64_t old_begin_ts_with_refcount = begin_ts_with_refcount;
-            gaia_txn_id_t begin_ts = begin_ts_from_word(old_begin_ts_with_refcount);
-
-            ASSERT_INVARIANT(
-                begin_ts == begin_ts_from_word(old_begin_ts_with_refcount),
-                "Cannot change ownership of a txn log with outstanding references!");
-
-            size_t refcount = refcount_from_word(old_begin_ts_with_refcount);
-            ASSERT_PRECONDITION(refcount > 0, "Cannot release a reference when refcount is zero!");
-            uint64_t new_begin_ts_with_refcount = word_from_begin_ts_and_refcount(begin_ts, --refcount);
-
-            if (begin_ts_with_refcount.compare_exchange_strong(old_begin_ts_with_refcount, new_begin_ts_with_refcount))
-            {
-                break;
-            }
-        }
-    }
+    inline void release_reference(gaia_txn_id_t begin_ts);
 
     // Returns false with no effect if begin_ts does not match the current
     // begin_ts, or it matches but the refcount is nonzero.
     // Otherwise, clears begin_ts_with_refcount and returns true.
-    inline bool invalidate(gaia_txn_id_t begin_ts)
-    {
-        uint64_t old_begin_ts_with_refcount = begin_ts_with_refcount;
-        gaia_txn_id_t old_begin_ts = begin_ts_from_word(old_begin_ts_with_refcount);
-        size_t old_refcount = refcount_from_word(old_begin_ts_with_refcount);
-
-        // Invalidation should fail if either invalidation has already occurred
-        // (with possible reuse), or there are outstanding shared references.
-        if (old_begin_ts != begin_ts || old_refcount > 0)
-        {
-            return false;
-        }
-
-        uint64_t new_begin_ts_with_refcount = 0;
-        if (begin_ts_with_refcount.compare_exchange_strong(old_begin_ts_with_refcount, new_begin_ts_with_refcount))
-        {
-            return true;
-        }
-
-        return false;
-    }
+    inline bool invalidate(gaia_txn_id_t begin_ts);
 };
 
 // The txn log header size may change in the future, but we want to explicitly
@@ -417,6 +344,54 @@ static_assert(c_txn_log_size == sizeof(txn_log_t), "Txn log size must be 1MB!");
 // To ensure the txn log record sequence number doesn't overflow,
 // log_record_t::sequence must be at least as large as txn_log_t::record_count.
 static_assert(sizeof(log_record_t::sequence) >= sizeof(txn_log_t::record_count));
+
+constexpr log_offset_t c_first_log_offset{c_invalid_log_offset.value() + 1};
+constexpr log_offset_t c_last_log_offset{c_max_logs};
+
+class logs_t
+{
+public:
+    inline void initialize();
+
+    // Returns true if the given log offset is allocated, false otherwise.
+    inline bool is_log_offset_allocated(log_offset_t offset);
+
+    // Allocates the first unallocated log offset, returning the invalid log
+    // offset if no unallocated offset is available.
+    inline log_offset_t allocate_log_offset(gaia_txn_id_t begin_ts);
+
+    // Deallocates the given log offset.
+    inline void deallocate_log_offset(log_offset_t offset);
+
+    // Returns the txn log at the given offset.
+    inline txn_log_t* get_log_from_offset(log_offset_t offset);
+
+private:
+    // Allocates the first used log offset.
+    inline log_offset_t allocate_used_log_offset();
+
+    // Allocates the first unused log offset.
+    inline log_offset_t allocate_unused_log_offset();
+
+private:
+    // We use this offset to track the lowest-numbered log offset that has never
+    // been allocated.
+    // NB: We use size_t here rather than log_offset_t to avoid integer
+    // overflow. A 64-bit atomically incremented counter cannot overflow in any
+    // reasonable time.
+    std::atomic<size_t> m_next_unused_log_offset{};
+
+    // The allocated status of each log offset is tracked in this bitmap. When
+    // opening a new txn, each session thread must allocate an offset for its txn
+    // log by setting a cleared bit in this bitmap. When txn log GC completes,
+    // the log's allocated bit should be cleared.
+    std::atomic<uint64_t> m_allocated_log_offsets_bitmap[(c_max_logs + 1) / common::c_uint64_bit_count]{};
+
+    // This is an array with 2^16 elements ("logs"), each holding 2^16 16-byte entries ("records").
+    // The first element is unused because we need to reserve offset 0 for the "invalid log offset" value.
+    // (This wastes only 1MB of virtual memory, which is inconsequential.)
+    txn_log_t m_logs[c_max_logs + 1]{};
+};
 
 struct counters_t
 {
@@ -443,14 +418,6 @@ struct data_t
     // The first entry of the array is reserved for the invalid offset value 0.
     aligned_storage_for_t<db_object_t> objects[c_max_locators + 1];
 };
-
-constexpr log_offset_t c_first_log_offset{c_invalid_log_offset.value() + 1};
-constexpr log_offset_t c_last_log_offset{c_max_logs};
-
-// This is an array with 2^16 elements ("logs"), each holding 2^16 16-byte entries ("records").
-// The first element is unused because we need to reserve offset 0 for the "invalid log offset" value.
-// (This wastes only 1MB of virtual memory, which is inconsequential.)
-typedef txn_log_t logs_t[c_max_logs + 1];
 
 // This is a shared-memory hash table mapping gaia_id keys to locator values. We
 // need a hash table node for each locator (to store the gaia_id key and the
@@ -480,15 +447,7 @@ struct id_index_t
     hash_node_t list_nodes[c_max_locators];
 };
 
-// These are types meant to access index types from the client/server.
-namespace index
-{
-
-class base_index_t;
-typedef std::shared_ptr<base_index_t> db_index_t;
-typedef std::unordered_map<common::gaia_id_t, db_index_t> indexes_t;
-
-} // namespace index
+#include "db_internal_types.inc"
 
 } // namespace db
 } // namespace gaia

@@ -62,39 +62,38 @@ static gaia::db::type_index_t* get_type_index()
     return gaia::db::server_t::s_shared_type_index.data();
 }
 
+static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
+{
+    // The txn_metadata segment should always be mapped whenever any callers
+    // of this method are able to observe it.
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_txn_metadata.is_set(), "Server txn_metadata segment is unmapped!");
+    return gaia::db::server_t::s_shared_txn_metadata.data();
+}
+
+static gaia::db::watermarks_t* get_watermarks()
+{
+    // The watermarks segment should always be mapped whenever any callers
+    // of this method are able to observe it.
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_watermarks.is_set(), "Server watermarks segment is unmapped!");
+    return gaia::db::server_t::s_shared_watermarks.data();
+}
+
+static gaia::db::safe_ts_entries_t* get_safe_ts_entries()
+{
+    // The safe_ts_entries segment should always be mapped whenever any callers
+    // of this method are able to observe it.
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_safe_ts_entries.is_set(), "Server safe_ts_entries segment is unmapped!");
+    return gaia::db::server_t::s_shared_safe_ts_entries.data();
+}
+
+// This is currently never used, so we just return nullptr to avoid changing the interface.
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()
 {
-    return &gaia::db::server_t::s_session_context->memory_manager;
+    return nullptr;
 }
 
+// This is currently never used, so we just return nullptr to avoid changing the interface.
 static gaia::db::memory_manager::chunk_manager_t* get_chunk_manager()
 {
-    return &gaia::db::server_t::s_session_context->chunk_manager;
-}
-
-static gaia::db::txn_log_t* get_txn_log_from_offset(gaia::db::log_offset_t offset)
-{
-    DEBUG_ASSERT_PRECONDITION(offset.is_valid(), "Txn log offset is invalid!");
-
-    gaia::db::logs_t* logs = get_logs();
-    return &((*logs)[offset]);
-}
-
-static gaia::db::txn_log_t* get_txn_log()
-{
-    log_offset_t txn_log_offset;
-    if (gaia::db::server_t::s_session_context && gaia::db::server_t::s_session_context->txn_context)
-    {
-        txn_log_offset = gaia::db::server_t::s_session_context->txn_context->txn_log_offset;
-    }
-    return get_txn_log_from_offset(txn_log_offset);
-}
-
-static gaia::db::gaia_txn_id_t get_txn_id()
-{
-    if (gaia::db::server_t::s_session_context && gaia::db::server_t::s_session_context->txn_context)
-    {
-        return gaia::db::server_t::s_session_context->txn_context->txn_id;
-    }
-    return c_invalid_gaia_txn_id;
+    return nullptr;
 }

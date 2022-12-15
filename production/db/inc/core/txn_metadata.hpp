@@ -15,6 +15,7 @@
 #include <optional>
 
 #include "gaia_internal/common/assert.hpp"
+#include "gaia_internal/db/db.hpp"
 #include "gaia_internal/db/db_types.hpp"
 
 #include "db_internal_types.hpp"
@@ -27,77 +28,36 @@ namespace db
 namespace transactions
 {
 
-// This identity class represents mutable txn metadata at an immutable (begin or
-// commit) timestamp. (It also manages the allocation and lifetime of the txn
-// metadata array.) This class handles all reads, writes, and synchronization on
-// the metadata array, but has no knowledge of the metadata format; that is the
-// responsibility of the txn_metadata_entry_t class.
+// This class encapsulates the txn metadata array. It handles all reads, writes,
+// and synchronization on the metadata array, but has no knowledge of the
+// metadata format; that is the responsibility of the txn_metadata_entry_t
+// class.
 class txn_metadata_t
 {
 public:
-    static void init_txn_metadata_map();
+    inline bool is_uninitialized_ts(gaia_txn_id_t ts);
+    inline bool is_sealed_ts(gaia_txn_id_t ts);
+    inline bool is_begin_ts(gaia_txn_id_t ts);
+    inline bool is_commit_ts(gaia_txn_id_t ts);
+    inline bool is_txn_submitted(gaia_txn_id_t begin_ts);
+    inline bool is_txn_validating(gaia_txn_id_t commit_ts);
+    inline bool is_txn_decided(gaia_txn_id_t commit_ts);
+    inline bool is_txn_committed(gaia_txn_id_t commit_ts);
+    inline bool is_txn_aborted(gaia_txn_id_t commit_ts);
+    inline bool is_txn_gc_complete(gaia_txn_id_t commit_ts);
+    inline bool is_txn_durable(gaia_txn_id_t commit_ts);
+    inline bool is_txn_active(gaia_txn_id_t begin_ts);
+    inline bool is_txn_terminated(gaia_txn_id_t begin_ts);
 
-    static bool is_txn_metadata_map_initialized();
+    inline gaia_txn_id_t get_begin_ts_from_commit_ts(gaia_txn_id_t commit_ts);
+    inline gaia_txn_id_t get_commit_ts_from_begin_ts(gaia_txn_id_t begin_ts);
+    inline db::log_offset_t get_txn_log_offset_from_ts(gaia_txn_id_t commit_ts);
 
-    static char* get_txn_metadata_map_base_address();
-
-public:
-    inline explicit txn_metadata_t(gaia_txn_id_t ts);
-    txn_metadata_t(const txn_metadata_t&) = default;
-
-    // The copy assignment operator is implicitly deleted because this class has
-    // no non-static, non-const members, but we make it explicit.
-    txn_metadata_t& operator=(const txn_metadata_t&) = delete;
-
-    friend inline bool operator==(txn_metadata_t a, txn_metadata_t b);
-    friend inline bool operator!=(txn_metadata_t a, txn_metadata_t b);
-
-    inline gaia_txn_id_t get_timestamp();
-
-    inline bool is_uninitialized();
-    inline bool is_sealed();
-    inline bool is_begin_ts();
-    inline bool is_commit_ts();
-    inline bool is_submitted();
-    inline bool is_validating();
-    inline bool is_decided();
-    inline bool is_committed();
-    inline bool is_aborted();
-    inline bool is_gc_complete();
-    inline bool is_durable();
-    inline bool is_active();
-    inline bool is_terminated();
-
-    static inline bool is_uninitialized_ts(gaia_txn_id_t ts);
-    static inline bool is_sealed_ts(gaia_txn_id_t ts);
-    static inline bool is_begin_ts(gaia_txn_id_t ts);
-    static inline bool is_commit_ts(gaia_txn_id_t ts);
-    static inline bool is_txn_submitted(gaia_txn_id_t begin_ts);
-    static inline bool is_txn_validating(gaia_txn_id_t commit_ts);
-    static inline bool is_txn_decided(gaia_txn_id_t commit_ts);
-    static inline bool is_txn_committed(gaia_txn_id_t commit_ts);
-    static inline bool is_txn_aborted(gaia_txn_id_t commit_ts);
-    static inline bool is_txn_gc_complete(gaia_txn_id_t commit_ts);
-    static inline bool is_txn_durable(gaia_txn_id_t commit_ts);
-    static inline bool is_txn_active(gaia_txn_id_t begin_ts);
-    static inline bool is_txn_terminated(gaia_txn_id_t begin_ts);
-
-    inline txn_metadata_t get_begin_ts_metadata();
-
-    // This returns an optional value because a begin_ts entry will not contain
-    // a commit_ts unless it has been submitted, and even then it may not because
-    // a begin_ts entry is not updated atomically with its commit_ts entry.
-    inline std::optional<txn_metadata_t> get_commit_ts_metadata();
-
-    static inline gaia_txn_id_t get_begin_ts_from_commit_ts(gaia_txn_id_t commit_ts);
-    static inline gaia_txn_id_t get_commit_ts_from_begin_ts(gaia_txn_id_t begin_ts);
-
-    inline db::log_offset_t get_txn_log_offset();
-    inline void set_active_txn_submitted(gaia_txn_id_t commit_ts);
-    inline void set_active_txn_terminated();
-    inline void update_txn_decision(bool has_committed);
-    inline void set_txn_durable();
-    inline bool set_txn_gc_complete();
+    inline void set_active_txn_submitted(gaia_txn_id_t begin_ts, gaia_txn_id_t commit_ts);
+    inline void set_active_txn_terminated(gaia_txn_id_t begin_ts);
+    inline void update_txn_decision(gaia_txn_id_t commit_ts, bool has_committed);
+    inline void set_txn_durable(gaia_txn_id_t commit_ts);
+    inline bool set_txn_gc_complete(gaia_txn_id_t commit_ts);
 
     // This is designed for implementing "fences" that can guarantee no thread can
     // ever claim a timestamp, by marking that timestamp permanently sealed. Sealing
@@ -107,31 +67,23 @@ public:
     // entry for that timestamp, it simply allocates another timestamp and retries.
     // This is possible because we never publish a newly allocated timestamp until
     // we know that its metadata entry has been successfully initialized.
-    inline bool seal_if_uninitialized();
+    inline bool seal_uninitialized_ts(gaia_txn_id_t ts);
 
-    static inline db::log_offset_t get_txn_log_offset(gaia_txn_id_t commit_ts);
-    static inline bool seal_uninitialized_ts(gaia_txn_id_t ts);
-    static inline void set_active_txn_submitted(gaia_txn_id_t begin_ts, gaia_txn_id_t commit_ts);
-    static inline void set_active_txn_terminated(gaia_txn_id_t begin_ts);
-    static inline void update_txn_decision(gaia_txn_id_t commit_ts, bool is_committed);
-    static inline void set_txn_durable(gaia_txn_id_t commit_ts);
-    static inline bool set_txn_gc_complete(gaia_txn_id_t commit_ts);
+    gaia_txn_id_t register_begin_ts();
+    gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t log_offset);
 
-    static gaia_txn_id_t register_begin_ts();
-    static gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t log_offset);
-
-    static void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
+    void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
 
 private:
-    inline txn_metadata_entry_t get_entry();
-    inline void set_entry(txn_metadata_entry_t entry);
+    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts);
+    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry);
 
     // This wrapper over std::atomic::compare_exchange_strong() returns the
     // actual value of this txn_metadata_t instance when the method was called.
     // If the returned value is not equal to the expected value, then the CAS
     // must have failed, otherwise it succeeded (compare_exchange_strong()
     // cannot fail spuriously).
-    inline txn_metadata_entry_t compare_exchange(
+    inline txn_metadata_entry_t compare_exchange(gaia_txn_id_t ts,
         txn_metadata_entry_t expected_value, txn_metadata_entry_t desired_value);
 
 private:
@@ -153,8 +105,8 @@ private:
     //
     // The array is always accessed without any locking, but its entries have
     // read and write barriers (via std::atomic) that ensure causal consistency
-    // between any threads that read or write the same txn metadata. Any writes to
-    // entries that may be written by multiple threads use CAS operations.
+    // between any threads that read or write the same txn metadata. Any writes
+    // to entries that may be written by multiple threads use CAS operations.
     //
     // The array's memory is managed via mmap(MAP_NORESERVE). We reserve 32TB of
     // virtual address space (1/8 of the total virtual address space available
@@ -170,19 +122,21 @@ private:
     // about a month and a half. If this is an issue, then we could treat the
     // array as a circular buffer, using a separate wraparound counter to
     // calculate the array offset from a timestamp, and we can use the 3
-    // reserved bits in the txn metadata to extend our range by a factor of
-    // 8, so we could allocate 2^20 timestamps/second for a full year. If we
-    // need a still larger timestamp range (say 64-bit timestamps, with
-    // wraparound), we could just store the difference between a commit
-    // timestamp and its txn's begin timestamp, which should be possible to
-    // bound to no more than half the bits we use for the full timestamp, so we
-    // would still need only 32 bits for a timestamp reference in the timestamp
-    // metadata. (We could store the array offset instead, but that would be
-    // dangerous when we approach wraparound.)
-    static inline std::atomic<uint64_t>* s_txn_metadata_map{nullptr};
-
-private:
-    const gaia_txn_id_t m_ts;
+    // reserved bits in the txn metadata to extend our range by a factor of 8,
+    // so we could allocate 2^20 timestamps/second for a full year. If we need a
+    // still larger timestamp range (say 64-bit timestamps, with wraparound), we
+    // could just store the difference between a commit timestamp and its txn's
+    // begin timestamp, which should be possible to bound to no more than half
+    // the bits we use for the full timestamp, so we would still need only 32
+    // bits for a timestamp reference in the timestamp metadata. (We could store
+    // the array offset instead, but that would be dangerous when we approach
+    // wraparound.)
+    //
+    // FIXME: To prevent test failures when multiple sessions are opened in the
+    // same process, we restrict timestamps to a much smaller range (2^35) than
+    // would be suitable for production. This will be fixed when we transition
+    // the txn metadata array to a ring buffer.
+    std::atomic<uint64_t> m_txn_metadata_map[txn_metadata_entry_t::get_max_ts_count() / c_session_limit];
 };
 
 #include "txn_metadata.inc"

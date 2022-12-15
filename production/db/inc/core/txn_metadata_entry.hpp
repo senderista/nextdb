@@ -18,6 +18,7 @@
 #include "gaia/common.hpp"
 
 #include "gaia_internal/common/assert.hpp"
+#include "gaia_internal/common/debug_assert.hpp"
 #include "gaia_internal/db/db_types.hpp"
 
 namespace gaia

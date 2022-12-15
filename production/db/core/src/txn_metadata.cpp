@@ -87,41 +87,6 @@ namespace transactions
 // because the watermark only moves forward. This global variable is also set as
 // part of advancing the watermark on termination of the oldest active txn,
 // which is delegated to that txn's session thread.
-void txn_metadata_t::init_txn_metadata_map()
-{
-    // We reserve 2^45 bytes = 32TB of virtual address space. YOLO.
-    constexpr size_t c_size_in_bytes{
-        txn_metadata_entry_t::get_max_ts_count() * sizeof(*s_txn_metadata_map)};
-
-    // Create an anonymous private mapping with MAP_NORESERVE to indicate that
-    // we don't care about reserving swap space.
-    // REVIEW: If this causes problems on systems that disable overcommit, we
-    // can just use PROT_NONE and mprotect(PROT_READ|PROT_WRITE) each page as we
-    // need it.
-    if (s_txn_metadata_map)
-    {
-        common::unmap_fd_data(s_txn_metadata_map, c_size_in_bytes);
-    }
-
-    common::map_fd_data(
-        s_txn_metadata_map,
-        c_size_in_bytes,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
-        -1,
-        0);
-}
-
-bool txn_metadata_t::is_txn_metadata_map_initialized()
-{
-    return (s_txn_metadata_map != nullptr);
-}
-
-char* txn_metadata_t::get_txn_metadata_map_base_address()
-{
-    ASSERT_PRECONDITION(is_txn_metadata_map_initialized(), "Txn metadata map is uninitialized!");
-    return reinterpret_cast<char*>(s_txn_metadata_map);
-}
 
 // This method allocates a new begin_ts and initializes its metadata in the txn
 // table.
@@ -140,7 +105,6 @@ gaia_txn_id_t txn_metadata_t::register_begin_ts()
         // Allocate a new begin timestamp.
         begin_ts = db::allocate_txn_id();
         txn_metadata_entry_t::check_ts_size(begin_ts);
-        txn_metadata_t begin_ts_metadata{begin_ts};
 
         // The txn metadata must be uninitialized (not sealed).
         txn_metadata_entry_t expected_value{
@@ -148,7 +112,7 @@ gaia_txn_id_t txn_metadata_t::register_begin_ts()
         txn_metadata_entry_t desired_value{
             txn_metadata_entry_t::new_begin_ts_entry()};
         txn_metadata_entry_t actual_value{
-            begin_ts_metadata.compare_exchange(expected_value, desired_value)};
+            compare_exchange(begin_ts, expected_value, desired_value)};
 
         if (actual_value == expected_value)
         {
@@ -181,7 +145,6 @@ gaia_txn_id_t txn_metadata_t::register_commit_ts(gaia_txn_id_t begin_ts, db::log
         // Allocate a new commit timestamp.
         commit_ts = db::allocate_txn_id();
         txn_metadata_entry_t::check_ts_size(commit_ts);
-        txn_metadata_t commit_ts_metadata{commit_ts};
 
         // The txn metadata must be uninitialized (not sealed).
         txn_metadata_entry_t expected_value{
@@ -189,7 +152,7 @@ gaia_txn_id_t txn_metadata_t::register_commit_ts(gaia_txn_id_t begin_ts, db::log
         txn_metadata_entry_t desired_value{
             txn_metadata_entry_t::new_commit_ts_entry(begin_ts, log_offset)};
         txn_metadata_entry_t actual_value{
-            commit_ts_metadata.compare_exchange(expected_value, desired_value)};
+            compare_exchange(commit_ts, expected_value, desired_value)};
 
         if (actual_value == expected_value)
         {
@@ -207,30 +170,28 @@ gaia_txn_id_t txn_metadata_t::register_commit_ts(gaia_txn_id_t begin_ts, db::log
 
 void txn_metadata_t::dump_txn_metadata_at_ts(gaia_txn_id_t ts)
 {
-    txn_metadata_t ts_metadata(ts);
-    std::cerr << ts_metadata.get_entry().dump_metadata();
+    std::cerr << get_entry(ts).dump_metadata();
 
-    if (ts_metadata.is_commit_ts())
+    if (is_commit_ts(ts))
     {
-        txn_metadata_t begin_ts_metadata = ts_metadata.get_begin_ts_metadata();
+        gaia_txn_id_t begin_ts = get_begin_ts_from_commit_ts(ts);
         std::cerr
             << "Metadata for commit_ts `" << ts << "` metadata's begin_ts `"
-            << begin_ts_metadata.get_timestamp() << "`: " << std::endl
-            << begin_ts_metadata.get_entry().dump_metadata();
+            << begin_ts << "`: " << std::endl
+            << get_entry(begin_ts).dump_metadata();
     }
 
-    if (ts_metadata.is_begin_ts())
+    if (is_begin_ts(ts))
     {
         // A begin_ts may not have a linked commit_ts, either because it is not
         // submitted or because it has not yet been updated with its commit_ts.
-        auto opt_commit_ts_metadata = ts_metadata.get_commit_ts_metadata();
-        if (opt_commit_ts_metadata)
+        gaia_txn_id_t commit_ts = get_commit_ts_from_begin_ts(ts);
+        if (commit_ts.is_valid())
         {
-            txn_metadata_t commit_ts_metadata = *opt_commit_ts_metadata;
             std::cerr
                 << "Metadata for begin_ts `" << ts << "` metadata's commit_ts `"
-                << commit_ts_metadata.get_timestamp() << "`: " << std::endl
-                << commit_ts_metadata.get_entry().dump_metadata();
+                << commit_ts << "`: " << std::endl
+                << get_entry(commit_ts).dump_metadata();
         }
     }
 }

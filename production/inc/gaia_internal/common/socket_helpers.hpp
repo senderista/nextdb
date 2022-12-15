@@ -100,10 +100,11 @@ inline void set_non_blocking(int socket)
     }
 }
 
-inline size_t send_msg_with_fds(int sock, const int* fds, size_t fd_count, void* data, size_t data_size)
+inline void send_msg_with_fds(
+    int sock, const int* fds, size_t fd_count, void* data, size_t data_size)
 {
-    // We should never send 0 bytes of data (because that would make it impossible
-    // to determine if a 0-byte read meant EOF).
+    // We should never send 0 bytes of data (because that would make it
+    // impossible to determine if a 0-byte read meant EOF).
     ASSERT_PRECONDITION(data_size > 0, "Invalid data size!");
     // fd_count has value equal to length of fds array,
     // and all fds we send must fit in control.buf below.
@@ -181,8 +182,6 @@ inline size_t send_msg_with_fds(int sock, const int* fds, size_t fd_count, void*
     ASSERT_POSTCONDITION(
         bytes_written == data_size,
         "sendmsg() payload was truncated but we didn't get EMSGSIZE.");
-
-    return bytes_written;
 }
 
 inline size_t recv_msg_with_fds(

@@ -26,17 +26,17 @@ static inline gaia::db::id_index_t* get_id_index();
 // Returns a pointer to a mapping of the "type_index" shared memory segment.
 static inline gaia::db::type_index_t* get_type_index();
 
+// Returns a pointer to a mapping of the "txn_metadata" shared memory segment.
+static inline gaia::db::transactions::txn_metadata_t* get_txn_metadata();
+
+// Returns a pointer to a mapping of the "watermarks" shared memory segment.
+static inline gaia::db::watermarks_t* get_watermarks();
+
+// Returns a pointer to a mapping of the "safe_ts_entries" shared memory segment.
+static inline gaia::db::safe_ts_entries_t* get_safe_ts_entries();
+
 // Gets the memory manager instance for the current thread or process.
 static inline gaia::db::memory_manager::memory_manager_t* get_memory_manager();
 
 // Gets the chunk manager instance for the current thread or process.
 static inline gaia::db::memory_manager::chunk_manager_t* get_chunk_manager();
-
-// Gets the transaction log at the given offset.
-static inline gaia::db::txn_log_t* get_txn_log_from_offset(gaia::db::log_offset_t offset);
-
-// Gets the transaction log for the current session thread.
-static inline gaia::db::txn_log_t* get_txn_log();
-
-// Gets the transaction ID for the current session thread.
-static inline gaia::db::gaia_txn_id_t get_txn_id();

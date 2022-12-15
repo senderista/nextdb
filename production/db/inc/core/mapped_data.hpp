@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <new>
+#include <type_traits>
 #include <vector>
 
 #include "db_internal_types.hpp"
@@ -116,7 +118,7 @@ protected:
     void open_shared(int fd) override;
 };
 
-// Structure describing a data mapping.
+// Structure describing a shared-memory data mapping.
 // This is used to enable common handling of multiple mappings based on an array of such descriptions,
 // via the methods of this class.
 struct data_mapping_t
@@ -129,6 +131,9 @@ struct data_mapping_t
         logs,
         id_index,
         type_index,
+        txn_metadata,
+        watermarks,
+        safe_ts_entries,
 
         // This must be kept the last enum value.
         // Any new entry should be added above it.

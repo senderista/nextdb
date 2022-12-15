@@ -15,8 +15,6 @@
 #include <iostream>
 #include <vector>
 
-#include <flatbuffers/base.h>
-
 #include "gaia/common.hpp"
 #include "gaia/component.hpp"
 #include "gaia/db/db.hpp"

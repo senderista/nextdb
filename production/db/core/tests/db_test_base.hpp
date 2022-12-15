@@ -8,6 +8,7 @@
 
 #include <unistd.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <thread>
@@ -87,12 +88,18 @@ protected:
 
     void SetUp() override
     {
-        start_server();
+        if (!std::getenv("NOFORK"))
+        {
+            start_server();
+        }
     }
 
     void TearDown() override
     {
-        kill_server();
+        if (!std::getenv("NOFORK"))
+        {
+            kill_server();
+        }
     }
 
 private:

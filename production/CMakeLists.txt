@@ -99,7 +99,7 @@ endif()
 
 # Default compiler/linker flags for Gaia targets.
 add_library(gaia_build_options INTERFACE)
-target_compile_options(gaia_build_options INTERFACE -Wall -Wextra -ftime-trace)
+target_compile_options(gaia_build_options INTERFACE -Wall -Wextra -Wunused -Wunreachable-code -ftime-trace)
 # Ensure Debug builds have the DEBUG macro defined.
 target_compile_definitions(gaia_build_options INTERFACE $<$<CONFIG:Debug>:DEBUG>)
 # Propagate the DISABLE_ASSERTS option to a macro definition.
@@ -201,12 +201,6 @@ set(DEPENDENCIES_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/deps")
 set(GOOGLE_TEST "${GAIA_REPO}/third_party/production/googletest")
 set(GOOGLE_TEST_INC "${GOOGLE_TEST}/googletest/include")
 
-set(FLATBUFFERS_ROOT ${DEPENDENCIES_INSTALL_PREFIX}/flatbuffers)
-set(FLATBUFFERS_SRC "${FLATBUFFERS_ROOT}/src")
-set(FLATBUFFERS_INC "${FLATBUFFERS_ROOT}/include")
-set(FLATBUFFERS_BIN "${FLATBUFFERS_ROOT}/bin")
-set(FLATBUFFERS_LIB "${FLATBUFFERS_ROOT}/lib")
-
 set(GAIA_PROD_BUILD "${CMAKE_CURRENT_BINARY_DIR}")
 
 set(GAIA_PARSER_GENERATED "${GAIA_PROD_BUILD}/catalog/parser/generated")
@@ -244,16 +238,6 @@ if(ENABLE_STACKTRACE)
   endif()
   target_link_libraries(gaia_stack_trace INTERFACE backward)
 endif()
-
-# Flatbuffers.
-add_subdirectory("${GAIA_REPO}/third_party/production/flatbuffers" flatbuffers)
-
-# If this add_executable is placed into third_party/production/flatbuffers/CMakeLists.txt
-# the rest of the project can't see it. This is the workaround I came up with, looking for a
-# cleaner solution.
-add_executable(flatc IMPORTED)
-set_target_properties(flatc PROPERTIES IMPORTED_LOCATION ${FLATBUFFERS_BIN}/flatc)
-add_dependencies(flatc flatbuffers_dependency)
 
 add_subdirectory(${GOOGLE_TEST} googletest EXCLUDE_FROM_ALL)
 

@@ -99,6 +99,13 @@ void mapped_data_t<T_data>::create(const char* name)
         this->m_fd,
         0);
 
+    // REVIEW: We can't do this for every type without zero-initializing giant
+    // arrays that are already zeroed. For now, we have to manually call
+    // initialization methods on all objects that require them.
+
+    // Invoke default constructor via placement new.
+    // new (this->m_data) T_data();
+
     this->m_is_set = true;
 }
 

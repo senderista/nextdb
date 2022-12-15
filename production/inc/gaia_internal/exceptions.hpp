@@ -19,7 +19,7 @@ namespace db
 class server_connection_failed_internal : public server_connection_failed
 {
 public:
-    explicit server_connection_failed_internal(const char* error_message, int error_number);
+    explicit server_connection_failed_internal(const char* error_message, int error_number = 0);
 
     int get_errno();
 

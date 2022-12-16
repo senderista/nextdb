@@ -13,7 +13,6 @@
 #include <atomic>
 #include <memory>
 #include <ostream>
-#include <unordered_map>
 
 #include "gaia/common.hpp"
 

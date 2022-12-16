@@ -97,7 +97,7 @@ std::vector<data_mapping_t>& client_t::data_mappings()
     return s_session_context->data_mappings;
 }
 
-std::unordered_map<chunk_offset_t, chunk_version_t>& client_t::map_gc_chunks_to_versions()
+std::vector<std::pair<chunk_offset_t, chunk_version_t>>& client_t::map_gc_chunks_to_versions()
 {
     return s_session_context->map_gc_chunks_to_versions;
 }

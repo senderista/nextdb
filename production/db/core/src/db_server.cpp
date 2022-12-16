@@ -20,7 +20,6 @@
 #include <ostream>
 #include <string>
 #include <thread>
-#include <unordered_set>
 
 #include <sys/epoll.h>
 #include <sys/eventfd.h>

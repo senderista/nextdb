@@ -12,7 +12,6 @@
 #include <functional>
 #include <optional>
 #include <thread>
-#include <unordered_set>
 
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -576,17 +575,19 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
     // txn with a conflicting write set, which would abort and hence not cause
     // us to abort).
 
-    // Because we make multiple passes over the conflict window, we need to track
-    // committed txns that have already been tested for conflicts.
-    // REVIEW: This codepath is latency-sensitive enough that we may want to avoid
-    // dynamic allocation (we could probably just use linear search in an array).
-    std::unordered_set<gaia_txn_id_t> committed_txns_tested_for_conflicts;
-
     // Iterate over all txns in conflict window, and test all committed txns for
     // conflicts. Repeat until no new committed txns are discovered. This gives
     // undecided txns as much time as possible to be validated by their
     // committing txn.
     bool has_found_new_committed_txn;
+
+    // Because we make multiple passes over the conflict window, we need to
+    // track committed txns that have already been tested for conflicts.
+    // REVIEW: Consider replacing this std::vector with std::pmr::vector to
+    // avoid the dynamic allocation of the backing array.
+    std::vector<gaia_txn_id_t> committed_txns_tested_for_conflicts{};
+    committed_txns_tested_for_conflicts.reserve(32);
+
     do
     {
         has_found_new_committed_txn = false;
@@ -606,10 +607,13 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
             if (get_txn_metadata()->is_commit_ts(ts) && get_txn_metadata()->is_txn_committed(ts))
             {
                 // Remember each committed txn commit_ts so we don't test it again.
-                const auto& [iter, is_new_committed_ts] = committed_txns_tested_for_conflicts.insert(ts);
-                if (is_new_committed_ts)
+                if (std::find(
+                    committed_txns_tested_for_conflicts.begin(),
+                    committed_txns_tested_for_conflicts.end(),
+                    ts) == committed_txns_tested_for_conflicts.end())
                 {
                     has_found_new_committed_txn = true;
+                    committed_txns_tested_for_conflicts.push_back(ts);
 
                     // Eagerly test committed txns for conflicts to give undecided
                     // txns more time for validation (and submitted txns more time
@@ -694,7 +698,11 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
             }
 
             // If a previously undecided txn has now committed, test it for conflicts.
-            if (get_txn_metadata()->is_txn_committed(ts) && committed_txns_tested_for_conflicts.count(ts) == 0)
+            if (get_txn_metadata()->is_txn_committed(ts) &&
+                std::find(
+                    committed_txns_tested_for_conflicts.begin(),
+                    committed_txns_tested_for_conflicts.end(),
+                    ts) == committed_txns_tested_for_conflicts.end())
             {
                 // We need to acquire references on both txn logs being
                 // tested for conflicts, in case either txn log is
@@ -1101,16 +1109,19 @@ void client_t::deallocate_object(gaia_offset_t offset)
     chunk_version_t version = chunk_manager.get_version();
 
     // Cache this chunk and its current version for later deallocation.
-    // REVIEW: This could be changed to use contains() after C++20.
-    if (map_gc_chunks_to_versions().count(chunk_offset) == 0)
+    bool found_chunk = false;
+    for (auto& entry : map_gc_chunks_to_versions())
     {
-        map_gc_chunks_to_versions().insert({chunk_offset, version});
+        if (entry.first == chunk_offset)
+        {
+            found_chunk = true;
+            // If this GC task already cached this chunk, then the versions must match!
+            ASSERT_INVARIANT(entry.second == version, "Chunk version must match cached chunk version!");
+        }
     }
-    else
+    if (!found_chunk)
     {
-        // If this GC task already cached this chunk, then the versions must match!
-        chunk_version_t cached_version = map_gc_chunks_to_versions()[chunk_offset];
-        ASSERT_INVARIANT(version == cached_version, "Chunk version must match cached chunk version!");
+        map_gc_chunks_to_versions().push_back({chunk_offset, version});
     }
 
     // Delegate deallocation of the object to the chunk manager.

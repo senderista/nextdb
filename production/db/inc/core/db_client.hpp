@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 #include <sys/socket.h>
 
@@ -99,14 +100,13 @@ private:
     static inline gaia_txn_id_t txn_id();
     static inline log_offset_t txn_log_offset();
     static inline txn_log_t* txn_log();
-    static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
 
     static inline int session_socket();
     static inline mapped_data_t<locators_t>& private_locators();
     static inline mapped_data_t<locators_t>& shared_locators();
     static inline mapped_data_t<data_t>& shared_data();
     static inline std::vector<data_mapping_t>& data_mappings();
-    static inline std::unordered_map<chunk_offset_t, chunk_version_t>& map_gc_chunks_to_versions();
+    static inline std::vector<std::pair<chunk_offset_t, chunk_version_t>>& map_gc_chunks_to_versions();
 
 private:
     // We don't use unique_ptr because its destructor is "non-trivial"

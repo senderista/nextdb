@@ -10,7 +10,6 @@
 
 #include <memory>
 #include <vector>
-#include <unordered_map>
 
 #include "gaia_internal/db/db_types.hpp"
 
@@ -81,7 +80,7 @@ struct client_session_context_t
     std::vector<data_mapping_t> data_mappings{};
 
     // This is used by GC tasks on a session thread to cache chunk IDs for empty chunk deallocation.
-    std::unordered_map<chunk_offset_t, chunk_version_t> map_gc_chunks_to_versions{};
+    std::vector<std::pair<chunk_offset_t, chunk_version_t>> map_gc_chunks_to_versions{};
 
     // REVIEW [GAIAPLAT-2068]: When we enable snapshot reuse across txns (by
     // applying the undo log from the previous txn to the existing snapshot and

@@ -13,7 +13,7 @@ bool client_t::is_session_open()
 
 bool client_t::is_transaction_open()
 {
-    return (s_session_context && s_session_context->private_locators.is_set());
+    return (s_session_context && s_session_context->txn_context && s_session_context->txn_context->txn_id.is_valid());
 }
 
 gaia_txn_id_t client_t::get_current_txn_id()
@@ -100,4 +100,9 @@ std::vector<data_mapping_t>& client_t::data_mappings()
 std::vector<std::pair<chunk_offset_t, chunk_version_t>>& client_t::map_gc_chunks_to_versions()
 {
     return s_session_context->map_gc_chunks_to_versions;
+}
+
+gaia_txn_id_t client_t::latest_applied_commit_ts()
+{
+    return s_session_context->latest_applied_commit_ts;
 }

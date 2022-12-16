@@ -107,6 +107,7 @@ private:
     static inline mapped_data_t<data_t>& shared_data();
     static inline std::vector<data_mapping_t>& data_mappings();
     static inline std::vector<std::pair<chunk_offset_t, chunk_version_t>>& map_gc_chunks_to_versions();
+    static inline gaia_txn_id_t latest_applied_commit_ts();
 
 private:
     // We don't use unique_ptr because its destructor is "non-trivial"
@@ -126,6 +127,10 @@ private:
     static int get_session_socket(const std::string& socket_name);
 
     static void validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
+
+    static bool get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts,
+        std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_ids_with_log_offsets);
+
     static void get_txn_log_offsets_for_snapshot(
         gaia_txn_id_t begin_ts, std::vector<std::pair<gaia_txn_id_t,
         log_offset_t>>& txn_ids_with_log_offsets_for_snapshot);

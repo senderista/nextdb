@@ -129,6 +129,7 @@ void client_t::begin_session()
     // Connect to the server's well-known socket name, and receive fds for the
     // shared-memory mappings.
     int received_fds[static_cast<size_t>(data_mapping_t::index_t::count_mappings)];
+    std::fill(received_fds, received_fds + std::size(received_fds), -1);
     size_t received_fd_count = std::size(received_fds);
     uint64_t magic{};
     try
@@ -257,13 +258,15 @@ void client_t::begin_transaction()
         throw transaction_log_allocation_failure_internal();
     }
 
-    // If we can pin all txn logs between latest_applied_commit_ts and our
-    // begin_ts, then we can reuse our snapshot. Otherwise, we must remap our
-    // snapshot.
+    // If our snapshot is already mapped, and we can pin all committed txn logs
+    // between latest_applied_commit_ts and our begin_ts, then we can reuse our
+    // snapshot. Otherwise, we must remap our snapshot.
     std::vector<std::pair<gaia_txn_id_t, log_offset_t>> txn_logs_for_snapshot;
-    bool can_reuse_snapshot = latest_applied_commit_ts().is_valid() &&
+    bool can_reuse_snapshot = (
+        private_locators().is_set() &&
+        latest_applied_commit_ts().is_valid() &&
         get_txn_log_offsets_in_range(
-            latest_applied_commit_ts() + 1, txn_id(), txn_logs_for_snapshot);
+            latest_applied_commit_ts() + 1, txn_id(), txn_logs_for_snapshot));
 
     ASSERT_POSTCONDITION(can_reuse_snapshot || txn_logs_for_snapshot.empty(),
         "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
@@ -302,6 +305,12 @@ void client_t::rollback_transaction()
     // Clean up all transaction-local session state.
     auto cleanup = make_scope_guard(txn_cleanup);
 
+    // REVIEW: Could just apply undo log and try to reuse snapshot.
+    auto cleanup_snapshot = make_scope_guard([&] {
+        private_locators().close();
+        s_session_context->latest_applied_commit_ts = c_invalid_gaia_txn_id;
+    });
+
     // Free any deallocated objects.
 
     // Release ownership as precondition for GC.
@@ -321,8 +330,6 @@ void client_t::rollback_transaction()
 }
 
 // This method returns void on a commit decision and throws on an abort decision.
-// It sends a message to the server containing the fd of this txn's log segment and
-// will block waiting for a reply from the server.
 void client_t::commit_transaction()
 {
     verify_txn_active();
@@ -341,6 +348,28 @@ void client_t::commit_transaction()
 
     // Clean up all transaction-local session state when we exit.
     auto cleanup = make_scope_guard(txn_cleanup);
+
+    auto cleanup_snapshot = make_scope_guard([&] {
+        // If we failed to apply all committed logs in our conflict window to
+        // our snapshot, then we cannot reuse it, so destroy the private
+        // mapping.
+        private_locators().close();
+
+        // We must clear latest_applied_commit_ts if there are any "holes" in
+        // the sequence of applied logs.
+        s_session_context->latest_applied_commit_ts = c_invalid_gaia_txn_id;
+    });
+
+    // Update watermarks and perform associated maintenance tasks. This will
+    // block new transactions on this session thread, but that is a feature, not
+    // a bug, because it provides natural backpressure on clients who submit
+    // long-running transactions that prevent old versions and logs from being
+    // freed. This approach helps keep the system from accumulating more
+    // deferred work than it can ever retire, which is a problem with performing
+    // all maintenance asynchronously in the background. Allowing this work to
+    // delay beginning new transactions but not delay committing the current
+    // transaction seems like a good compromise.
+    auto do_gc = make_scope_guard(perform_maintenance);
 
     // Before registering the log, sort by locator for fast conflict detection.
     sort_log(txn_log());
@@ -373,7 +402,7 @@ void client_t::commit_transaction()
     // Update the txn metadata with our commit decision.
     get_txn_metadata()->update_txn_decision(commit_ts, is_committed);
 
-    // Throw an exception on server-side abort.
+    // Throw an exception on an abort decision.
     // REVIEW: We could include the gaia_ids of conflicting objects in
     // transaction_update_conflict_internal (message or structured data).
     if (!is_committed)
@@ -397,16 +426,34 @@ void client_t::commit_transaction()
     // latency and test our GC logic.
     get_txn_metadata()->set_txn_durable(commit_ts);
 
-    // Update watermarks and perform associated maintenance tasks. This will
-    // block new transactions on this session thread, but that is a feature, not
-    // a bug, because it provides natural backpressure on clients who submit
-    // long-running transactions that prevent old versions and logs from being
-    // freed. This approach helps keep the system from accumulating more
-    // deferred work than it can ever retire, which is a problem with performing
-    // all maintenance asynchronously in the background. Allowing this work to
-    // delay beginning new transactions but not delay committing the current
-    // transaction seems like a good compromise.
-    perform_maintenance();
+    // Try to apply all committed logs in our conflict window to our snapshot,
+    // to enable later reuse.
+    // NB: Since we have already applied our own txn log to our snapshot, we are
+    // applying our own log twice. But applying txn logs to snapshots is
+    // idempotent, so this is benign, and cheaper than applying our undo log
+    // first to avoid the duplicate log application.
+    std::vector<std::pair<gaia_txn_id_t, log_offset_t>> txn_logs_for_snapshot;
+    bool can_apply_logs = get_txn_log_offsets_in_range(
+        txn_id() + 1, commit_ts, txn_logs_for_snapshot);
+
+    ASSERT_POSTCONDITION(can_apply_logs || txn_logs_for_snapshot.empty(),
+        "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
+
+    if (can_apply_logs)
+    {
+        // Apply all logs in commit_ts order.
+        for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot)
+        {
+            apply_log_from_offset(private_locators().data(), log_offset);
+            get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
+        }
+
+        // Remember the latest log we applied so we can reuse this snapshot.
+        s_session_context->latest_applied_commit_ts = commit_ts;
+
+        // We can possibly reuse this snapshot, so keep it mapped.
+        cleanup_snapshot.dismiss();
+    }
 }
 
 void client_t::init_memory_manager()
@@ -447,7 +494,7 @@ bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_
     try
     {
         // Protect the range of txn metadata being scanned.
-        safe_ts_t(start_ts);
+        safe_ts_t safe_start_ts(start_ts);
 
         // This is just for asserting an invariant.
         bool acquired_first_log_ref = false;
@@ -1195,7 +1242,7 @@ void client_t::deallocate_object(gaia_offset_t offset)
     }
     if (!found_chunk)
     {
-        map_gc_chunks_to_versions().push_back({chunk_offset, version});
+        map_gc_chunks_to_versions().emplace_back(chunk_offset, version);
     }
 
     // Delegate deallocation of the object to the chunk manager.

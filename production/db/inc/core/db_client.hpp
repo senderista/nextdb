@@ -9,7 +9,6 @@
 #pragma once
 
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -77,16 +76,6 @@ public:
 
     // Internal version of begin_session(), called by public interface in db.hpp.
     static void begin_session();
-
-    // This returns a generator object for locators of a given type.
-    static std::shared_ptr<common::iterators::generator_t<gaia_locator_t>>
-    get_locator_generator_for_type(common::gaia_type_t type);
-
-    // This is a helper for higher-level methods that use
-    // this generator to build a range or iterator object.
-    template <typename T_element_type>
-    static std::function<std::optional<T_element_type>()>
-    get_stream_generator_for_socket(std::shared_ptr<int> stream_socket_ptr);
 
 private:
     // Called by internal code to verify preconditions.

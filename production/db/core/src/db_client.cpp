@@ -641,168 +641,49 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
 
 bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 {
-    // Validation algorithm:
+    gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
 
-    // NB: We make two passes over the conflict window, even though only one
-    // pass would suffice, because we want to avoid unnecessary validation of
-    // undecided txns by skipping over them on the first pass while we check
-    // committed txns for conflicts, hoping that some undecided txns will be
-    // decided before the second pass. This adds some complexity (e.g., tracking
-    // committed txns already tested for conflicts), but avoids unnecessary
-    // duplicated work, by deferring helping other txns validate until all
-    // necessary work is complete and we would be forced to block otherwise.
-    //
-    // 1. Find all committed transactions in conflict window, i.e., between our
-    //    begin and commit timestamps, traversing from oldest to newest txns and
-    //    testing for conflicts as we go, to allow as much time as possible for
-    //    undecided txns to be validated, and for commit timestamps allocated
-    //    within our conflict window to be registered. Seal all uninitialized
-    //    timestamps we encounter, so no active txns can be submitted within our
-    //    conflict window. Any submitted txns which have allocated a commit
-    //    timestamp within our conflict window but have not yet registered their
-    //    commit timestamp must now retry with a new timestamp. (This allows us
-    //    to treat our conflict window as an immutable snapshot of submitted
-    //    txns, without needing to acquire any locks.) Skip over all sealed
-    //    timestamps, active txns, undecided txns, and aborted txns. Repeat this
-    //    phase until no newly committed txns are discovered.
-    //
-    // 2. Recursively validate all undecided txns in the conflict window, from
-    //    oldest to newest. Note that we cannot recurse indefinitely, because by
-    //    hypothesis no undecided txns can precede our begin timestamp (because
-    //    a new transaction must validate any undecided transactions with commit
-    //    timestamps preceding its begin timestamp before it can proceed).
-    //    However, we could duplicate work with other session threads validating
-    //    their committing txns. We mitigate this by 1) deferring any recursive
-    //    validation until no more committed txns have been found during a
-    //    repeated scan of the conflict window, 2) tracking all txns' validation
-    //    status in their commit timestamp entries, and 3) rechecking validation
-    //    status for the current txn after scanning each possibly conflicting
-    //    txn log (and aborting validation if it has already been validated).
-    //
-    // 3. Test any committed txns validated in the preceding step for conflicts.
-    //    (This also includes any txns which were undecided in the first pass
-    //    but committed before the second pass.)
-    //
-    // 4. If any of these steps finds that our write set conflicts with the
-    //    write set of any committed txn, we must abort. Otherwise, we commit.
-    //    In either case, we set the decided state in our commit timestamp metadata
-    //    and return the commit decision to the client.
-    //
-    // REVIEW: Possible optimization (in the original version but removed in the
-    // current code for simplicity): find the latest undecided txn which
-    // conflicts with our write set. Any undecided txns later than this don't
-    // need to be validated (but earlier, non-conflicting undecided txns still
-    // need to be validated, because they could conflict with a later undecided
-    // txn with a conflicting write set, which would abort and hence not cause
-    // us to abort).
-
-    // Iterate over all txns in conflict window, and test all committed txns for
-    // conflicts. Repeat until no new committed txns are discovered. This gives
-    // undecided txns as much time as possible to be validated by their
-    // committing txn.
-    bool has_found_new_committed_txn;
-
-    // Because we make multiple passes over the conflict window, we need to
-    // track committed txns that have already been tested for conflicts.
-    // REVIEW: Consider replacing this std::vector with std::pmr::vector to
-    // avoid the dynamic allocation of the backing array.
-    std::vector<gaia_txn_id_t> committed_txns_tested_for_conflicts{};
-    committed_txns_tested_for_conflicts.reserve(32);
-
-    do
+    // Optimization for single-threaded case: return success if the conflict window is empty.
+    if (commit_ts == begin_ts + 1)
     {
-        has_found_new_committed_txn = false;
-        for (gaia_txn_id_t ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts) + 1; ts < commit_ts; ++ts)
+        return true;
+    }
+
+    // Acquire a single reference to the committing txn's log for the duration
+    // of validation to minimize contention.
+    if (!acquire_txn_log_reference_from_commit_ts(commit_ts))
+    {
+        // If the committing txn has already had its log invalidated,
+        // then it must have already been (recursively) validated, so
+        // we can just return the commit decision.
+        ASSERT_INVARIANT(
+            get_txn_metadata()->is_txn_decided(commit_ts),
+            c_message_validating_txn_should_have_been_validated_before_log_invalidation);
+        return get_txn_metadata()->is_txn_committed(commit_ts);
+    }
+    auto release_committing_log_ref = make_scope_guard([&commit_ts] {
+        release_txn_log_reference_from_commit_ts(commit_ts);
+    });
+
+    // Seal all uninitialized entries, validate all undecided txns,
+    // and test all committed txns for conflicts with the committing txn.
+    for (gaia_txn_id_t ts = begin_ts + 1; ts < commit_ts; ++ts)
+    {
+        // Seal all uninitialized entries. This marks a "fence" after which any
+        // submitted txns with commit timestamps in our conflict window must
+        // already be registered under their commit_ts (they must retry with a
+        // new timestamp otherwise). (The sealing is necessary only on the first
+        // pass, but the "uninitialized txn metadata" check is cheap enough that
+        // repeating it on subsequent passes shouldn't matter.)
+        if (get_txn_metadata()->seal_uninitialized_ts(ts))
         {
-            // Seal all uninitialized timestamps. This marks a "fence" after which
-            // any submitted txns with commit timestamps in our conflict window must
-            // already be registered under their commit_ts (they must retry with a
-            // new timestamp otherwise). (The sealing is necessary only on the
-            // first pass, but the "uninitialized txn metadata" check is cheap enough
-            // that repeating it on subsequent passes shouldn't matter.)
-            if (get_txn_metadata()->seal_uninitialized_ts(ts))
-            {
-                continue;
-            }
-
-            if (get_txn_metadata()->is_commit_ts(ts) && get_txn_metadata()->is_txn_committed(ts))
-            {
-                // Remember each committed txn commit_ts so we don't test it again.
-                if (std::find(
-                    committed_txns_tested_for_conflicts.begin(),
-                    committed_txns_tested_for_conflicts.end(),
-                    ts) == committed_txns_tested_for_conflicts.end())
-                {
-                    has_found_new_committed_txn = true;
-                    committed_txns_tested_for_conflicts.push_back(ts);
-
-                    // Eagerly test committed txns for conflicts to give undecided
-                    // txns more time for validation (and submitted txns more time
-                    // to register their commit timestamps before they're sealed).
-
-                    // We need to acquire references on both txn logs being
-                    // tested for conflicts, in case either txn log is
-                    // invalidated by another thread concurrently advancing the
-                    // watermark. If either log is invalidated, it must be that
-                    // another thread has validated our txn, so we can exit
-                    // early.
-
-                    if (!acquire_txn_log_reference_from_commit_ts(commit_ts))
-                    {
-                        // If the committing txn has already had its log invalidated,
-                        // then it must have already been (recursively) validated, so
-                        // we can just return the commit decision.
-                        ASSERT_INVARIANT(
-                            get_txn_metadata()->is_txn_decided(commit_ts),
-                            c_message_validating_txn_should_have_been_validated_before_log_invalidation);
-                        return get_txn_metadata()->is_txn_committed(commit_ts);
-                    }
-                    auto release_committing_log_ref = make_scope_guard([&commit_ts] {
-                        release_txn_log_reference_from_commit_ts(commit_ts);
-                    });
-
-                    if (!acquire_txn_log_reference_from_commit_ts(ts))
-                    {
-                        // If this committed txn already had its log
-                        // invalidated, then it must be eligible for GC. But any
-                        // commit_ts within the conflict window is ineligible
-                        // for GC, so the committing txn must have already been
-                        // (recursively) validated, and we can just return the
-                        // commit decision.
-                        ASSERT_INVARIANT(
-                            get_txn_metadata()->is_txn_decided(commit_ts),
-                            c_message_validating_txn_should_have_been_validated_before_conflicting_log_invalidation);
-                        return get_txn_metadata()->is_txn_committed(commit_ts);
-                    }
-                    auto release_committed_log_ref = make_scope_guard([&ts] {
-                        release_txn_log_reference_from_commit_ts(ts);
-                    });
-
-                    if (txn_logs_conflict(
-                        get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts),
-                        get_txn_metadata()->get_txn_log_offset_from_ts(ts)))
-                    {
-                        return false;
-                    }
-                }
-            }
-
-            // Check if another thread has already validated this txn.
-            if (get_txn_metadata()->is_txn_decided(commit_ts))
-            {
-                return get_txn_metadata()->is_txn_committed(commit_ts);
-            }
+            continue;
         }
-    } while (has_found_new_committed_txn);
 
-    // Validate all undecided txns, from oldest to newest. If any validated txn
-    // commits, test it immediately for conflicts. Also test any committed txns
-    // for conflicts if they weren't tested in the first pass.
-    for (gaia_txn_id_t ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts) + 1; ts < commit_ts; ++ts)
-    {
+        // Validate each undecided txn, and then test committed txns for conflicts.
         if (get_txn_metadata()->is_commit_ts(ts))
         {
-            // Validate any currently undecided txn.
+            // If this txn is undecided, validate it.
             if (get_txn_metadata()->is_txn_validating(ts))
             {
                 // By hypothesis, there are no undecided txns with commit timestamps
@@ -818,48 +699,27 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                 get_txn_metadata()->update_txn_decision(ts, is_committed);
             }
 
-            // If a previously undecided txn has now committed, test it for conflicts.
-            if (get_txn_metadata()->is_txn_committed(ts) &&
-                std::find(
-                    committed_txns_tested_for_conflicts.begin(),
-                    committed_txns_tested_for_conflicts.end(),
-                    ts) == committed_txns_tested_for_conflicts.end())
+            // If the validated txn is committed, test it for conflicts.
+            if (get_txn_metadata()->is_txn_committed(ts))
             {
-                // We need to acquire references on both txn logs being
-                // tested for conflicts, in case either txn log is
-                // invalidated by another thread concurrently advancing the
-                // watermark. If either log is invalidated, it must be that
-                // another thread has validated our txn, so we can exit
-                // early.
-
-                if (!acquire_txn_log_reference_from_commit_ts(commit_ts))
-                {
-                    // If the committing txn has already had its log invalidated,
-                    // then it must have already been (recursively) validated, so
-                    // we can just return the commit decision.
-                    ASSERT_INVARIANT(
-                        get_txn_metadata()->is_txn_decided(commit_ts),
-                        c_message_validating_txn_should_have_been_validated_before_log_invalidation);
-                    return get_txn_metadata()->is_txn_committed(commit_ts);
-                }
-                auto release_committing_log_ref = make_scope_guard([&commit_ts] {
-                    release_txn_log_reference_from_commit_ts(commit_ts);
-                });
-
+                // We need to acquire references on both txn logs being tested for
+                // conflicts, in case either txn log is invalidated by another
+                // thread concurrently advancing the watermark. If either log is
+                // invalidated, it must be that another thread has validated our
+                // txn, so we can exit early.
                 if (!acquire_txn_log_reference_from_commit_ts(ts))
                 {
-                    // If this committed txn already had its log
-                    // invalidated, then it must be eligible for GC. But any
-                    // commit_ts within the conflict window is ineligible
-                    // for GC, so the committing txn must have already been
-                    // (recursively) validated, and we can just return the
-                    // commit decision.
+                    // If this submitted txn already had its log invalidated, then
+                    // it must be eligible for GC. But any commit_ts within the
+                    // conflict window is ineligible for GC, so the committing txn
+                    // must have already been (recursively) validated, and we can
+                    // just return the commit decision.
                     ASSERT_INVARIANT(
                         get_txn_metadata()->is_txn_decided(commit_ts),
                         c_message_validating_txn_should_have_been_validated_before_conflicting_log_invalidation);
                     return get_txn_metadata()->is_txn_committed(commit_ts);
                 }
-                auto release_committed_log_ref = make_scope_guard([&ts] {
+                auto release_submitted_log_ref = make_scope_guard([&ts] {
                     release_txn_log_reference_from_commit_ts(ts);
                 });
 

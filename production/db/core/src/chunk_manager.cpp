@@ -272,15 +272,20 @@ bool chunk_manager_t::is_empty(chunk_version_t initial_version) const
         // chunk to a new state using our now-outdated version.
         // REVIEW: do we need a distinct return value for failed
         // version check?
+        // REVIEW: The version check on each read proved a major bottleneck, so
+        // we made it debug-only. We can safely check the invariant only when
+        // preceded by the version check, so we made that debug-only as well.
+#ifdef DEBUG
         chunk_version_t current_version = m_metadata->get_chunk_version();
         if (current_version != initial_version)
         {
             return false;
         }
+#endif
 
         // The bits set in the deallocation bitmap word must be a subset of the
         // bits set in the allocation bitmap word.
-        ASSERT_INVARIANT(
+        DEBUG_ASSERT_INVARIANT(
             (allocation_word | deallocation_word) == allocation_word,
             "All bits set in the deallocation bitmap must be set in the allocation bitmap!");
 
@@ -296,7 +301,16 @@ bool chunk_manager_t::is_empty(chunk_version_t initial_version) const
         }
     }
 
-    return true;
+    // If we got here, then all set allocation bits have corresponding set
+    // deallocation bits. Either the chunk is really empty or the chunk might
+    // have already been deallocated, so check the version.
+    chunk_version_t current_version = m_metadata->get_chunk_version();
+    if (current_version == initial_version)
+    {
+        return true;
+    }
+
+    return false;
 }
 
 void chunk_manager_t::decommit_data_pages()

@@ -73,12 +73,16 @@ function(configure_gaia_target TARGET)
       message(FATAL_ERROR "ENABLE_PROFILING_SUPPORT=ON is only supported in Release builds.")
     endif()
 
-    # Instrument all Gaia static libraries/executables for profiling (e.g. uftrace).
-    # Keep this property PRIVATE to avoid leaking it into dependent targets.
+    # Instrument all Gaia static libraries/executables for profiling (e.g.
+    # uftrace). Keep this property PRIVATE to avoid leaking it into dependent
+    # targets.
     # REVIEW: Listing alternative profiling options for trial-and-error
     # evaluation. Only `-pg` is supported by gcc, while the other 2 options are
     # supported by clang.
-    # REVIEW: Only `-pg` seems to avoid bus errors, so making that the default option.
+    # NB: `-finstrument-functions` allows profiling inlined functions, while
+    # `-pg` does not. `-fxray-instrument` works only on MacOS.
+    # REVIEW: Only `-pg` seems to avoid bus errors, so making that the default.
+    # (`-finstrument-functions` only seems to work for very short runtimes.)
     target_compile_options(${TARGET} PRIVATE -pg)
     # target_compile_options(${TARGET} PRIVATE -finstrument-functions)
     # target_compile_options(${TARGET} PRIVATE -fxray-instrument)

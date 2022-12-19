@@ -238,6 +238,10 @@ void client_t::begin_transaction()
     // Clean up all transaction-local session state.
     auto cleanup = make_scope_guard(txn_cleanup);
 
+    auto cleanup_snapshot_logs = make_scope_guard([&] {
+        txn_logs_for_snapshot().clear();
+    });
+
     // Allocate a new begin_ts for this txn and initialize its metadata in the txn table.
     s_session_context->txn_context->txn_id = get_txn_metadata()->register_begin_ts();
 
@@ -261,14 +265,13 @@ void client_t::begin_transaction()
     // If our snapshot is already mapped, and we can pin all committed txn logs
     // between latest_applied_commit_ts and our begin_ts, then we can reuse our
     // snapshot. Otherwise, we must remap our snapshot.
-    std::vector<std::pair<gaia_txn_id_t, log_offset_t>> txn_logs_for_snapshot;
     bool can_reuse_snapshot = (
         private_locators().is_set() &&
         latest_applied_commit_ts().is_valid() &&
         get_txn_log_offsets_in_range(
-            latest_applied_commit_ts() + 1, txn_id(), txn_logs_for_snapshot));
+            latest_applied_commit_ts() + 1, txn_id(), txn_logs_for_snapshot()));
 
-    ASSERT_POSTCONDITION(can_reuse_snapshot || txn_logs_for_snapshot.empty(),
+    ASSERT_POSTCONDITION(can_reuse_snapshot || txn_logs_for_snapshot().empty(),
         "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
 
     if (!can_reuse_snapshot)
@@ -280,12 +283,12 @@ void client_t::begin_transaction()
         private_locators().open(s_session_context->fd_locators, manage_fd, is_shared);
 
         // Get all txn logs that might need to be applied to the new snapshot.
-        get_txn_log_offsets_for_snapshot(txn_id(), txn_logs_for_snapshot);
+        get_txn_log_offsets_for_snapshot(txn_id(), txn_logs_for_snapshot());
     }
 
     // Apply (in commit_ts order) all txn logs that were committed before our
     // begin_ts and may not have been applied to our snapshot.
-    for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot)
+    for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
     {
         apply_log_from_offset(private_locators().data(), log_offset);
         get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
@@ -348,6 +351,10 @@ void client_t::commit_transaction()
 
     // Clean up all transaction-local session state when we exit.
     auto cleanup = make_scope_guard(txn_cleanup);
+
+    auto cleanup_snapshot_logs = make_scope_guard([&] {
+        txn_logs_for_snapshot().clear();
+    });
 
     auto cleanup_snapshot = make_scope_guard([&] {
         // If we failed to apply all committed logs in our conflict window to
@@ -432,17 +439,16 @@ void client_t::commit_transaction()
     // applying our own log twice. But applying txn logs to snapshots is
     // idempotent, so this is benign, and cheaper than applying our undo log
     // first to avoid the duplicate log application.
-    std::vector<std::pair<gaia_txn_id_t, log_offset_t>> txn_logs_for_snapshot;
     bool can_apply_logs = get_txn_log_offsets_in_range(
-        txn_id() + 1, commit_ts, txn_logs_for_snapshot);
+        txn_id() + 1, commit_ts, txn_logs_for_snapshot());
 
-    ASSERT_POSTCONDITION(can_apply_logs || txn_logs_for_snapshot.empty(),
+    ASSERT_POSTCONDITION(can_apply_logs || txn_logs_for_snapshot().empty(),
         "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
 
     if (can_apply_logs)
     {
         // Apply all logs in commit_ts order.
-        for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot)
+        for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
         {
             apply_log_from_offset(private_locators().data(), log_offset);
             get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
@@ -491,6 +497,10 @@ void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_
 bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts,
     std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_ids_with_log_offsets)
 {
+    ASSERT_PRECONDITION(
+        txn_ids_with_log_offsets.empty(),
+        "Vector passed in to get_txn_log_offsets_in_range() should be empty!");
+
     try
     {
         // Protect the range of txn metadata being scanned.

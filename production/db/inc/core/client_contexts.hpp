@@ -79,6 +79,9 @@ struct client_session_context_t
     // The order of declarations must be the order of data_mapping_t::index_t values!
     std::vector<data_mapping_t> data_mappings{};
 
+    // This is used to collect txn logs to be applied to the snapshot.
+    std::vector<std::pair<gaia_txn_id_t, log_offset_t>> txn_logs_for_snapshot{};
+
     // This is used by GC tasks on a session thread to cache chunk IDs for empty chunk deallocation.
     std::vector<std::pair<chunk_offset_t, chunk_version_t>> map_gc_chunks_to_versions{};
 

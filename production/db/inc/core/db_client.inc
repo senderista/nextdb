@@ -97,6 +97,11 @@ std::vector<data_mapping_t>& client_t::data_mappings()
     return s_session_context->data_mappings;
 }
 
+std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& client_t::txn_logs_for_snapshot()
+{
+    return s_session_context->txn_logs_for_snapshot;
+}
+
 std::vector<std::pair<chunk_offset_t, chunk_version_t>>& client_t::map_gc_chunks_to_versions()
 {
     return s_session_context->map_gc_chunks_to_versions;

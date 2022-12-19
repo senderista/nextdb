@@ -95,6 +95,7 @@ private:
     static inline mapped_data_t<locators_t>& shared_locators();
     static inline mapped_data_t<data_t>& shared_data();
     static inline std::vector<data_mapping_t>& data_mappings();
+    static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
     static inline std::vector<std::pair<chunk_offset_t, chunk_version_t>>& map_gc_chunks_to_versions();
     static inline gaia_txn_id_t latest_applied_commit_ts();
 

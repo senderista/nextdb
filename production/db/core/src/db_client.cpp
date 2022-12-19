@@ -1196,6 +1196,17 @@ void client_t::truncate_txn_table()
     // Get a snapshot of the pre-truncate watermark before advancing it.
     gaia_txn_id_t prev_pre_truncate_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_truncate);
 
+    // Abort if the largest possible range of metadata that can be freed (from
+    // the last truncation boundary to the current post-GC watermark) does not
+    // exceed the minimum page threshold.
+    size_t max_pages_to_decommit = get_txn_metadata_page_count_from_ts_range(
+        prev_pre_truncate_watermark, get_watermarks()->get_watermark(watermark_type_t::post_gc));
+
+    if (max_pages_to_decommit < transactions::c_min_pages_to_free)
+    {
+        return;
+    }
+
     // Compute a safe truncation timestamp.
     gaia_txn_id_t new_pre_truncate_watermark = safe_ts_t::get_safe_truncation_ts();
 
@@ -1233,17 +1244,12 @@ void client_t::truncate_txn_table()
     // Calculate the number of pages between the previously read pre-truncate
     // watermark and our safe truncation timestamp. If the result exceeds zero,
     // then decommit all such pages.
-    char* prev_page_start_address = get_txn_metadata_page_address_from_ts(prev_pre_truncate_watermark);
-    char* new_page_start_address = get_txn_metadata_page_address_from_ts(new_pre_truncate_watermark);
-
-    // Check for overflow.
-    ASSERT_INVARIANT(
-        prev_page_start_address <= new_page_start_address,
-        "The new pre-truncate watermark must start on the same or later page than the previous pre-truncate watermark!");
-
-    size_t pages_to_decommit_count = (new_page_start_address - prev_page_start_address) / c_page_size_in_bytes;
+    size_t pages_to_decommit_count = get_txn_metadata_page_count_from_ts_range(
+        prev_pre_truncate_watermark, new_pre_truncate_watermark);
     if (pages_to_decommit_count > 0)
     {
+        char* prev_page_start_address = get_txn_metadata_page_address_from_ts(prev_pre_truncate_watermark);
+
         // MADV_FREE seems like the best fit for our needs, since it allows
         // the OS to lazily reclaim decommitted pages. (If we move the txn
         // table to a shared mapping (e.g. memfd), then we'll need to switch
@@ -1269,6 +1275,21 @@ char* client_t::get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts)
     size_t ts_entry_page_byte_offset = (ts_entry_byte_offset / c_page_size_in_bytes) * c_page_size_in_bytes;
     char* ts_entry_page_address = txn_metadata_map_base_address + ts_entry_page_byte_offset;
     return ts_entry_page_address;
+}
+
+size_t client_t::get_txn_metadata_page_count_from_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts)
+{
+    ASSERT_PRECONDITION(start_ts <= end_ts, "Start timestamp must be at least as large as end timestamp!");
+
+    char* start_page_start_address = get_txn_metadata_page_address_from_ts(start_ts);
+    char* end_page_start_address = get_txn_metadata_page_address_from_ts(end_ts);
+
+    // Check for overflow, just in case.
+    ASSERT_INVARIANT(
+        start_page_start_address <= end_page_start_address,
+        "The end timestamp entry must reside on the same or later page as the start timestamp entry!");
+
+    return (end_page_start_address - start_page_start_address) / c_page_size_in_bytes;
 }
 
 void client_t::apply_txn_log_from_ts(gaia_txn_id_t commit_ts)

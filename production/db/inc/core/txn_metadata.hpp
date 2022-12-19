@@ -28,6 +28,10 @@ namespace db
 namespace transactions
 {
 
+// The minimum value for the upper bound on unused pages that must exist
+// before we attempt to decommit unused pages in the txn metadata map.
+constexpr size_t c_min_pages_to_free = 64;
+
 // This class encapsulates the txn metadata array. It handles all reads, writes,
 // and synchronization on the metadata array, but has no knowledge of the
 // metadata format; that is the responsibility of the txn_metadata_entry_t

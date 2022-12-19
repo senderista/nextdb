@@ -138,6 +138,7 @@ private:
     static void update_post_gc_watermark();
     static void truncate_txn_table();
     static char* get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts);
+    static size_t get_txn_metadata_page_count_from_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
 
     static void apply_txn_log_from_ts(gaia_txn_id_t commit_ts);
     static void gc_txn_log_from_offset(log_offset_t log_offset, bool is_committed);

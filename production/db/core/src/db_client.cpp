@@ -1072,10 +1072,15 @@ void client_t::gc_applied_txn_logs()
     {
         chunk_offset_t chunk_offset = entry.first;
         chunk_version_t chunk_version = entry.second;
-        chunk_manager_t chunk_manager;
-        chunk_manager.load(chunk_offset);
-        chunk_manager.try_deallocate_chunk(chunk_version);
-        chunk_manager.release();
+        // Don't try to deallocate a chunk that this session owns; it will be
+        // deallocated when it is retired.
+        if (chunk_offset != client_t::chunk_offset())
+        {
+            chunk_manager_t chunk_manager;
+            chunk_manager.load(chunk_offset);
+            chunk_manager.try_deallocate_chunk(chunk_version);
+            chunk_manager.release();
+        }
     }
 
     // Finally, catch up the post-GC watermark.

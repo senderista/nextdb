@@ -72,6 +72,11 @@ txn_log_t* client_t::txn_log()
     return get_logs()->get_log_from_offset(s_session_context->txn_context->txn_log_offset);
 }
 
+chunk_offset_t client_t::chunk_offset()
+{
+    return s_session_context->chunk_manager.chunk_offset();
+}
+
 int client_t::session_socket()
 {
     return s_session_context->session_socket;

@@ -90,6 +90,7 @@ private:
     static inline log_offset_t txn_log_offset();
     static inline txn_log_t* txn_log();
 
+    static inline chunk_offset_t chunk_offset();
     static inline int session_socket();
     static inline mapped_data_t<locators_t>& private_locators();
     static inline mapped_data_t<locators_t>& shared_locators();

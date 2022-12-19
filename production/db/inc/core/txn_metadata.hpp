@@ -35,7 +35,7 @@ namespace transactions
 class txn_metadata_t
 {
 public:
-    inline bool is_uninitialized_ts(gaia_txn_id_t ts);
+    inline bool is_uninitialized_ts(gaia_txn_id_t ts, bool relaxed_load = false);
     inline bool is_sealed_ts(gaia_txn_id_t ts);
     inline bool is_begin_ts(gaia_txn_id_t ts);
     inline bool is_commit_ts(gaia_txn_id_t ts);
@@ -75,8 +75,8 @@ public:
     void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
 
 private:
-    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts);
-    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry);
+    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts, bool relaxed_load = false);
+    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store = false);
 
     // This wrapper over std::atomic::compare_exchange_strong() returns the
     // actual value of this txn_metadata_t instance when the method was called.

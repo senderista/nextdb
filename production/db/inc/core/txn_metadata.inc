@@ -11,9 +11,9 @@ constexpr char c_message_not_a_begin_timestamp[] = "Not a begin timestamp!";
 constexpr char c_message_not_a_commit_timestamp[] = "Not a commit timestamp!";
 constexpr char c_message_not_an_active_transaction[] = "Not an active transaction!";
 
-bool txn_metadata_t::is_uninitialized_ts(gaia_txn_id_t ts)
+bool txn_metadata_t::is_uninitialized_ts(gaia_txn_id_t ts, bool relaxed_load)
 {
-    return get_entry(ts).is_uninitialized();
+    return get_entry(ts, relaxed_load).is_uninitialized();
 }
 
 bool txn_metadata_t::is_sealed_ts(gaia_txn_id_t ts)
@@ -104,7 +104,10 @@ db::log_offset_t txn_metadata_t::get_txn_log_offset_from_ts(gaia_txn_id_t commit
 bool txn_metadata_t::seal_uninitialized_ts(gaia_txn_id_t ts)
 {
     // If the metadata is not uninitialized, we can't seal it.
-    if (!is_uninitialized_ts(ts))
+    // Use relaxed load because if the read is stale we will only incur an
+    // unnecessary CAS.
+    bool relaxed_load = true;
+    if (!is_uninitialized_ts(ts, relaxed_load))
     {
         return false;
     }
@@ -206,14 +209,16 @@ bool txn_metadata_t::set_txn_gc_complete(gaia_txn_id_t commit_ts)
     return (actual_value == expected_value);
 }
 
-txn_metadata_entry_t txn_metadata_t::get_entry(gaia_txn_id_t ts)
+txn_metadata_entry_t txn_metadata_t::get_entry(gaia_txn_id_t ts, bool relaxed_load)
 {
-    return txn_metadata_entry_t{m_txn_metadata_map[ts].load()};
+    std::memory_order order = relaxed_load ? std::memory_order_relaxed : std::memory_order_seq_cst;
+    return txn_metadata_entry_t{m_txn_metadata_map[ts].load(order)};
 }
 
-void txn_metadata_t::set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry)
+void txn_metadata_t::set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store)
 {
-    m_txn_metadata_map[ts].store(entry.get_word());
+    std::memory_order order = relaxed_store ? std::memory_order_relaxed : std::memory_order_seq_cst;
+    m_txn_metadata_map[ts].store(entry.get_word(), order);
 }
 
 txn_metadata_entry_t txn_metadata_t::compare_exchange(gaia_txn_id_t ts,

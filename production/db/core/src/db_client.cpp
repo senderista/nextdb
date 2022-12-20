@@ -1200,10 +1200,12 @@ void client_t::truncate_txn_table()
     // Abort if the largest possible range of metadata that can be freed (from
     // the last truncation boundary to the current post-GC watermark) does not
     // exceed the minimum page threshold.
-    size_t max_pages_to_decommit = get_txn_metadata_page_count_from_ts_range(
+    // We add 1 because in general the truncation boundaries will not fall on a
+    // page boundary.
+    size_t pages_to_decommit_upper_bound = 1 + get_txn_metadata_page_count_from_ts_range(
         prev_pre_truncate_watermark, get_watermarks()->get_watermark(watermark_type_t::post_gc));
 
-    if (max_pages_to_decommit < transactions::c_min_pages_to_free)
+    if (pages_to_decommit_upper_bound < transactions::c_min_pages_to_free)
     {
         return;
     }

@@ -191,6 +191,7 @@ void client_t::begin_session()
 
     // Initialize thread-local data for safe timestamp mechanism.
     // This MUST be done *after* initializing the shared-memory mappings!
+    // TODO: handle failure (throw new exception type?)
     safe_ts_t::initialize(get_safe_ts_entries(), get_watermarks());
     auto cleanup_safe_ts_data = make_scope_guard([] {
         safe_ts_t::finalize();
@@ -388,16 +389,18 @@ void client_t::commit_transaction()
     // of this txn, until the commit decision is returned to the client. NB:
     // This MUST be done before acquiring a commit_ts!
     //
-    // We do not catch safe_ts_failure here because it should be impossible for
+    // We do not handle safe_ts failure here because it should be impossible for
     // the post-GC watermark to advance past an active begin_ts (our begin_ts is
-    // not marked SUBMITTED until we acquire a commit_ts). If a safe_ts_failure
-    // exception is thrown here, that indicates a bug.
+    // not marked SUBMITTED until we acquire a commit_ts). If
+    // safe_ts_t::reserve() fails here, that indicates a bug.
     //
-    // BUGBUG: We have observed a safe_ts_failure exception thrown here! This is
-    // a critical correctness issue: it indicates either a bug in the
-    // implementation or in the algorithm itself. It is imperative to specify
-    // and model-check the safe memory reclamation algorithm for txn metadata!
+    // BUGBUG: We have observed a safe_ts failure here! This is a critical
+    // correctness issue: it indicates either a bug in the implementation or in
+    // the algorithm itself. It is imperative to specify and model-check the
+    // safe memory reclamation algorithm for txn metadata!
     safe_ts_t safe_begin_ts(txn_id());
+    bool safe_ts_succeeded = safe_begin_ts.reserve();
+    ASSERT_INVARIANT(safe_ts_succeeded, "safe_ts reservation cannot fail!");
 
     // Register the committing txn under a new commit timestamp.
     gaia_txn_id_t commit_ts = submit_txn(
@@ -501,60 +504,58 @@ bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_
         txn_ids_with_log_offsets.empty(),
         "Vector passed in to get_txn_log_offsets_in_range() should be empty!");
 
-    try
+    // Protect the range of txn metadata being scanned.
+    safe_ts_t safe_start_ts(start_ts);
+    if (!safe_start_ts.reserve())
     {
-        // Protect the range of txn metadata being scanned.
-        safe_ts_t safe_start_ts(start_ts);
+        // Failure just means that we cannot retrieve all logs from the range.
+        return false;
+    }
 
-        // This is just for asserting an invariant.
-        bool acquired_first_log_ref = false;
+    // This is just for asserting an invariant.
+    bool acquired_first_log_ref = false;
 
-        for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
+    for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
+    {
+        if (get_txn_metadata()->is_commit_ts(ts))
         {
-            if (get_txn_metadata()->is_commit_ts(ts))
+            ASSERT_INVARIANT(
+                get_txn_metadata()->is_txn_decided(ts),
+                "Undecided commit_ts found in snapshot window!");
+            if (get_txn_metadata()->is_txn_committed(ts))
             {
-                ASSERT_INVARIANT(
-                    get_txn_metadata()->is_txn_decided(ts),
-                    "Undecided commit_ts found in snapshot window!");
-                if (get_txn_metadata()->is_txn_committed(ts))
+                gaia_txn_id_t txn_id = get_txn_metadata()->get_begin_ts_from_commit_ts(ts);
+
+                // Because the watermark could advance past its saved value, we
+                // need to be sure that we don't send a commit_ts with a
+                // possibly-reused log offset, so we increment the reference
+                // count in the txn log header before applying the log.
+                // The reference count is collocated in the same word as the
+                // begin timestamp, and we verify the timestamp hasn't changed
+                // when we increment the reference count, so we will never try
+                // to apply a reused txn log.
+                log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(ts);
+                txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
+                bool acquire_ref_succeeded = txn_log->acquire_reference(txn_id);
+
+                // If we can acquire a reference to the first txn log in the range, then
+                // it should be impossible for any GC task to advance past that log's
+                // commit_ts and invalidate any subsequent logs.
+                ASSERT_INVARIANT(acquire_ref_succeeded || !acquired_first_log_ref,
+                    "Any txn log after a pinned txn log cannot be invalidated!");
+
+                if (acquire_ref_succeeded)
                 {
-                    gaia_txn_id_t txn_id = get_txn_metadata()->get_begin_ts_from_commit_ts(ts);
-
-                    // Because the watermark could advance past its saved value, we
-                    // need to be sure that we don't send a commit_ts with a
-                    // possibly-reused log offset, so we increment the reference
-                    // count in the txn log header before applying the log.
-                    // The reference count is collocated in the same word as the
-                    // begin timestamp, and we verify the timestamp hasn't changed
-                    // when we increment the reference count, so we will never try
-                    // to apply a reused txn log.
-                    log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(ts);
-                    txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
-                    bool acquire_ref_succeeded = txn_log->acquire_reference(txn_id);
-
-                    // If we can acquire a reference to the first txn log in the range, then
-                    // it should be impossible for any GC task to advance past that log's
-                    // commit_ts and invalidate any subsequent logs.
-                    ASSERT_INVARIANT(acquire_ref_succeeded || !acquired_first_log_ref,
-                        "Any txn log after a pinned txn log cannot be invalidated!");
-
-                    if (acquire_ref_succeeded)
-                    {
-                        acquired_first_log_ref = true;
-                        txn_ids_with_log_offsets.emplace_back(txn_id, log_offset);
-                    }
-                    else
-                    {
-                        // We must return either all or none of the txn logs in the range.
-                        return false;
-                    }
+                    acquired_first_log_ref = true;
+                    txn_ids_with_log_offsets.emplace_back(txn_id, log_offset);
+                }
+                else
+                {
+                    // We must return either all or none of the txn logs in the range.
+                    return false;
                 }
             }
         }
-    }
-    catch (const safe_ts_failure&)
-    {
-        return false;
     }
 
     return true;

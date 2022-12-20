@@ -198,7 +198,7 @@ void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
     entries[valid_entry_index] = c_invalid_gaia_txn_id;
 }
 
-void safe_ts_t::initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* watermarks)
+bool safe_ts_t::initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* watermarks)
 {
     ASSERT_PRECONDITION(s_min_safe_ts_value == c_invalid_gaia_txn_id,
         "Saved minimum timestamp should be invalid at initialization!");
@@ -223,10 +223,10 @@ void safe_ts_t::initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* wat
     s_safe_ts_entries_index = s_safe_ts_entries_ptr->reserve_safe_ts_index();
     if (s_safe_ts_entries_index == safe_ts_entries_t::c_invalid_safe_ts_index)
     {
-        // REVIEW: This is a different failure mode than other uses of this
-        // exception, should we use a different exception?
-        throw safe_ts_failure();
+        return false;
     }
+
+    return true;
 }
 
 void safe_ts_t::finalize()
@@ -352,47 +352,52 @@ gaia_txn_id_t safe_ts_t::get_safe_truncation_ts()
 safe_ts_t::safe_ts_t(gaia_txn_id_t safe_ts)
     : m_ts(safe_ts)
 {
+}
+
+bool safe_ts_t::reserve()
+{
+    ASSERT_PRECONDITION(m_ts.is_valid(), "Cannot reserve a safe_ts without a valid timestamp!");
+
     ASSERT_PRECONDITION(s_safe_ts_entries_ptr, "Expected safe_ts entries to be allocated!");
     ASSERT_PRECONDITION(s_safe_ts_values_ptr, "Expected safe_ts stack to be allocated!");
 
-    // To simplify the safe_watermark_t implementation, we allow safe_ts to be
-    // invalid. The destructor will be a no-op in this case.
-    if (!safe_ts.is_valid())
-    {
-        return;
-    }
+    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at start of reservation!");
 
-    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at start of constructor!");
-
-    // If safe_ts is the minimum element in the safe_ts stack, then
+    // If m_ts is the minimum element in the safe_ts stack, then
     // replace this thread's reserved safe_ts entry.
     ASSERT_INVARIANT(s_safe_ts_values_ptr->empty() || s_min_safe_ts_value.is_valid(),
         "Minimum timestamp must be valid if stack is non-empty!");
-    if (!s_min_safe_ts_value.is_valid() || safe_ts < s_min_safe_ts_value)
+    if (!s_min_safe_ts_value.is_valid() || m_ts < s_min_safe_ts_value)
     {
-        if (!s_safe_ts_entries_ptr->reserve_safe_ts(s_safe_ts_entries_index, safe_ts, s_watermarks_ptr))
+        if (!s_safe_ts_entries_ptr->reserve_safe_ts(s_safe_ts_entries_index, m_ts, s_watermarks_ptr))
         {
             // Force the client to handle the validation failure.
-            throw safe_ts_failure();
+            return false;
         }
-        s_min_safe_ts_value = safe_ts;
+        s_min_safe_ts_value = m_ts;
     }
 
-    // We have successfully reserved the new safe_ts if necessary, so push the
-    // new safe_ts onto the stack of safe_ts values.
-    s_safe_ts_values_ptr->push_back(safe_ts);
+    // We have successfully reserved m_ts if necessary, so push m_ts onto the
+    // stack of safe_ts values.
+    s_safe_ts_values_ptr->push_back(m_ts);
 
-    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at end of constructor!");
+    DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at end of reservation!");
+
+    m_reserved = true;
+
+    return true;
 }
 
 safe_ts_t::safe_ts_t(safe_ts_t&& other) noexcept
-    : m_ts(std::exchange(other.m_ts, c_invalid_gaia_txn_id))
+    : m_ts(std::exchange(other.m_ts, c_invalid_gaia_txn_id)),
+      m_reserved(std::exchange(other.m_reserved, false))
 {
 }
 
 safe_ts_t& safe_ts_t::operator=(safe_ts_t&& other) noexcept
 {
     this->m_ts = std::exchange(other.m_ts, c_invalid_gaia_txn_id);
+    this->m_reserved = std::exchange(other.m_reserved, false);
     return *this;
 }
 
@@ -401,10 +406,18 @@ safe_ts_t::operator gaia_txn_id_t() const
     return m_ts;
 }
 
+bool safe_ts_t::reserved() const
+{
+    return m_reserved;
+}
+
 safe_ts_t::~safe_ts_t()
 {
-    // A moved-from object has an invalid timestamp.
-    if (!m_ts.is_valid())
+    ASSERT_PRECONDITION(m_ts.is_valid() || !m_reserved, "Cannot have an reserved safe_ts with an invalid timestamp!")
+
+    // If the timestamp is invalid (e.g. the object was moved-from) or was not
+    // successfully reserved, we have nothing to do.
+    if (!m_ts.is_valid() || !m_reserved)
     {
         return;
     }
@@ -461,41 +474,47 @@ safe_ts_t::~safe_ts_t()
 }
 
 // The constructor reads the current value of the given watermark, and
-// initializes a safe_ts_t object to that value. If initialization fails, then
-// it retries after reading the value of the given watermark again.
+// initializes a safe_ts object to that value. If initialization fails, then it
+// retries after reading the value of the given watermark again.
 safe_watermark_t::safe_watermark_t(watermark_type_t watermark_type)
 {
     ASSERT_PRECONDITION(safe_ts_t::s_watermarks_ptr, "Expected watermarks pointer to be set!");
 
     // Retry until we have a valid safe_ts for the current value of
     // the watermark.
-    while (true)
+    while (!m_safe_ts.reserved())
     {
         gaia_txn_id_t watermark_ts = safe_ts_t::s_watermarks_ptr->get_watermark(watermark_type);
-        try
+
+        // The constructor is a no-op if the watermark is uninitialized.
+        if (!watermark_ts.is_valid())
         {
-            // First try to obtain a local safe_ts for the current value of the
-            // watermark. If the local safe_ts is successfully initialized, use
-            // it to initialize our member safe_ts. (Initialization cannot fail
-            // because the move assignment operator does not release the "safe
-            // timestamp" that was reserved in the local safe_ts's constructor.)
-            safe_ts_t safe_ts(watermark_ts);
-            m_safe_ts = std::move(safe_ts);
-            // NB: It is legal to call any method without preconditions on a
-            // moved-from safe_ts, because the standard specifies that
-            // "Moved-from objects shall be placed in a valid but unspecified
-            // state."
-            // NOLINTBEGIN(clang-analyzer-cplusplus.Move)
-            ASSERT_POSTCONDITION(
-                static_cast<gaia_txn_id_t>(safe_ts).is_valid() == false,
-                "safe_ts should contain an invalid timestamp after moving!");
-            // NOLINTEND(clang-analyzer-cplusplus.Move)
-            break;
+            return;
         }
-        catch (const safe_ts_failure&)
+
+        // First try to obtain a local safe_ts for the current value of the
+        // watermark. If the local safe_ts is successfully initialized, use
+        // it to initialize our member safe_ts. (Initialization cannot fail
+        // because the move assignment operator does not release the "safe
+        // timestamp" that was reserved in the local safe_ts's constructor.)
+        safe_ts_t safe_ts(watermark_ts);
+        if (!safe_ts.reserve())
         {
             continue;
         }
+
+        // Reservation was successful, so move-initialize our safe_ts member.
+        m_safe_ts = std::move(safe_ts);
+
+        // NB: It is legal to call any method without preconditions on a
+        // moved-from safe_ts, because the standard specifies that
+        // "Moved-from objects shall be placed in a valid but unspecified
+        // state."
+        // NOLINTBEGIN(clang-analyzer-cplusplus.Move)
+        ASSERT_POSTCONDITION(
+            static_cast<gaia_txn_id_t>(safe_ts).is_valid() == false,
+            "safe_ts should contain an invalid timestamp after moving!");
+        // NOLINTEND(clang-analyzer-cplusplus.Move)
     }
 }
 

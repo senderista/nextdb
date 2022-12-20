@@ -103,10 +103,6 @@ public:
     static constexpr size_t c_max_safe_ts_index{c_session_limit - 1};
 };
 
-class safe_ts_failure : public common::gaia_exception
-{
-};
-
 // This class enables client code that is scanning a range of txn metadata
 // to prevent any of that metadata's memory from being reclaimed during the
 // scan. The client constructs a safe_ts_t object using the timestamp at the
@@ -116,12 +112,12 @@ class safe_ts_failure : public common::gaia_exception
 // timestamp" is protected from memory reclamation for the duration of the
 // scan.
 //
-// The constructor adds its timestamp argument to a thread-local set
-// containing the timestamps of all currently active safe_ts_t instances
-// owned by this thread. The minimum timestamp in the set is recomputed, and
-// if it has changed, the constructor attempts to reserve the new minimum
-// timestamp for this thread. If reservation fails, then the constructor
-// throws a `safe_ts_failure` exception.
+// The reserve() method adds the timestamp argument to the constructor to a
+// thread-local set containing the timestamps of all currently active safe_ts_t
+// instances owned by this thread. The minimum timestamp in the set is
+// recomputed, and if it has changed, the method attempts to reserve the new
+// minimum timestamp for this thread. If reservation fails, then the method
+// returns false.
 //
 // The destructor removes the object's timestamp from the thread-local set,
 // causing the minimum timestamp in the set to be recomputed. If it has
@@ -141,10 +137,21 @@ public:
     inline safe_ts_t& operator=(safe_ts_t&& other) noexcept;
     inline operator gaia_txn_id_t() const;
 
+    // This instance method actually reserves the safe timestamp that the object
+    // was initialized with.
+    // Returns false if the safe timestamp could not be reserved, true
+    // otherwise.
+    inline bool reserve();
+
+    // Returns true if reserve() was successfully called, false otherwise.
+    inline bool reserved() const;
+
     // This method must be called before instantiating any safe_ts_t objects on
     // the current thread. It is intended to be called during session
     // initialization.
-    static inline void initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* watermarks);
+    // Returns false if a safe_ts entry cannot be reserved for this thread, true
+    // otherwise.
+    static inline bool initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* watermarks);
 
     // This method is intended to be called during session finalization. After
     // this method returns, no safe_ts objects can be instantiated on the
@@ -163,6 +170,9 @@ private:
     // it needs to be set to an invalid value by the move
     // constructor/assignment operator.
     gaia_txn_id_t m_ts{c_invalid_gaia_txn_id};
+
+    // Indicates whether reserve() was successfully called.
+    bool m_reserved{false};
 
     thread_local static inline size_t s_safe_ts_entries_index{safe_ts_entries_t::c_invalid_safe_ts_index};
 

@@ -198,63 +198,21 @@ void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
     entries[valid_entry_index] = c_invalid_gaia_txn_id;
 }
 
-bool safe_ts_t::initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* watermarks)
+gaia_txn_id_t safe_ts_entries_t::get_reserved_ts(size_t index)
 {
-    ASSERT_PRECONDITION(s_min_safe_ts_value == c_invalid_gaia_txn_id,
-        "Saved minimum timestamp should be invalid at initialization!");
-
-    // Cache pointers to thread-local safe_ts_entries_t and watermarks_t objects.
-    s_safe_ts_entries_ptr = safe_ts_entries;
-    s_watermarks_ptr = watermarks;
-
-    // Allocate stack of safe_ts values.
-    ASSERT_PRECONDITION(!s_safe_ts_values_ptr,
-        "Stack of safe_ts values should not be allocated!");
-
-    s_safe_ts_values_ptr = new std::vector<gaia_txn_id_t>{};
-    // REVIEW: We should log the max number of entries ever used by the
-    // stack in various workloads to determine a good initial capacity.
-    s_safe_ts_values_ptr->reserve(8);
-
-    // Reserve this thread's safe_ts entries index.
-    ASSERT_PRECONDITION(s_safe_ts_entries_index == safe_ts_entries_t::c_invalid_safe_ts_index,
-        "safe_ts entries index should be invalid!");
-
-    s_safe_ts_entries_index = s_safe_ts_entries_ptr->reserve_safe_ts_index();
-    if (s_safe_ts_entries_index == safe_ts_entries_t::c_invalid_safe_ts_index)
+    auto& entries = m_safe_ts_per_thread_entries[index];
+    for (size_t i = 0; i < std::size(entries); ++i)
     {
-        return false;
+        if (entries[i] != c_invalid_gaia_txn_id)
+        {
+            return entries[i].load();
+        }
     }
 
-    return true;
+    return c_invalid_gaia_txn_id;
 }
 
-void safe_ts_t::finalize()
-{
-    ASSERT_PRECONDITION(s_safe_ts_entries_ptr,
-        "Pointer to safe_ts entries should be set!");
-
-    // Deallocate stack of safe_ts values.
-    ASSERT_PRECONDITION(s_safe_ts_values_ptr,
-        "Stack of safe_ts values should be allocated!");
-
-    delete s_safe_ts_values_ptr;
-    s_safe_ts_values_ptr = nullptr;
-    s_min_safe_ts_value = c_invalid_gaia_txn_id;
-
-    // Release this thread's safe_ts entries index.
-    ASSERT_PRECONDITION(s_safe_ts_entries_index <= safe_ts_entries_t::c_max_safe_ts_index,
-        "safe_ts entries index should be valid!");
-
-    // This automatically invalidates s_safe_ts_entries_index.
-    s_safe_ts_entries_ptr->release_safe_ts_index(s_safe_ts_entries_index);
-
-    // We don't own these objects, so just clear their pointers.
-    s_safe_ts_entries_ptr = nullptr;
-    s_watermarks_ptr = nullptr;
-}
-
-gaia_txn_id_t safe_ts_t::get_safe_truncation_ts()
+gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks)
 {
     // The algorithm (loosely based on Maged Michael's "Hazard Pointers: Safe
     // Memory Reclamation for Lock-Free Objects"):
@@ -313,8 +271,12 @@ gaia_txn_id_t safe_ts_t::get_safe_truncation_ts()
     // <= "validation-time snapshot of post-GC watermark"
     // <= "published and validated safe timestamp"
 
+    // POSTCONDITION: safe_truncation_ts is the minimum of the pre-scan snapshot
+    // of the post-GC watermark and the smallest published timestamp that the
+    // scan observed.
+
     // Take a snapshot of the post-GC watermark before the scan.
-    gaia_txn_id_t pre_scan_post_gc_watermark = s_watermarks_ptr->get_watermark(watermark_type_t::post_gc);
+    gaia_txn_id_t pre_scan_post_gc_watermark = watermarks->get_watermark(watermark_type_t::post_gc);
 
     // The post-GC watermark is an upper bound on the safe truncation timestamp.
     gaia_txn_id_t safe_truncation_ts = pre_scan_post_gc_watermark;
@@ -329,7 +291,7 @@ gaia_txn_id_t safe_ts_t::get_safe_truncation_ts()
     // watermark. There is no need to try to prevent this, because
     // advance_watermark() will fail, the current GC task will abort, and
     // another thread will try to advance the pre-truncate watermark.
-    for (const auto& per_thread_entries : s_safe_ts_entries_ptr->m_safe_ts_per_thread_entries)
+    for (const auto& per_thread_entries : m_safe_ts_per_thread_entries)
     {
         for (const auto& per_thread_entry : per_thread_entries)
         {
@@ -349,6 +311,70 @@ gaia_txn_id_t safe_ts_t::get_safe_truncation_ts()
     return safe_truncation_ts;
 }
 
+bool safe_ts_t::initialize(safe_ts_entries_t* safe_ts_entries, watermarks_t* watermarks)
+{
+    ASSERT_PRECONDITION(s_min_safe_ts_value == c_invalid_gaia_txn_id,
+        "Saved minimum timestamp should be invalid at initialization!");
+
+    // Cache pointers to thread-local safe_ts_entries_t and watermarks_t objects.
+    s_safe_ts_entries_ptr = safe_ts_entries;
+    s_watermarks_ptr = watermarks;
+
+    // Allocate stack of safe_ts values.
+    ASSERT_PRECONDITION(!s_safe_ts_values_ptr,
+        "Stack of safe_ts values should not be allocated!");
+
+    s_safe_ts_values_ptr = new std::vector<gaia_txn_id_t>{};
+    // REVIEW: We should log the max number of entries ever used by the
+    // stack in various workloads to determine a good initial capacity.
+    s_safe_ts_values_ptr->reserve(8);
+
+    // Reserve this thread's safe_ts entries index.
+    ASSERT_PRECONDITION(s_safe_ts_entries_index == safe_ts_entries_t::c_invalid_safe_ts_index,
+        "safe_ts entries index should be invalid!");
+
+    s_safe_ts_entries_index = s_safe_ts_entries_ptr->reserve_safe_ts_index();
+    if (s_safe_ts_entries_index == safe_ts_entries_t::c_invalid_safe_ts_index)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void safe_ts_t::finalize()
+{
+    ASSERT_PRECONDITION(s_safe_ts_entries_ptr,
+        "Pointer to safe_ts entries should be set!");
+
+    // Deallocate stack of safe_ts values.
+    ASSERT_PRECONDITION(s_safe_ts_values_ptr,
+        "Stack of safe_ts values should be allocated!");
+
+    delete s_safe_ts_values_ptr;
+    s_safe_ts_values_ptr = nullptr;
+    s_min_safe_ts_value = c_invalid_gaia_txn_id;
+
+    // Release this thread's safe_ts entries index.
+    ASSERT_PRECONDITION(s_safe_ts_entries_index <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be valid!");
+
+    // This automatically invalidates s_safe_ts_entries_index.
+    s_safe_ts_entries_ptr->release_safe_ts_index(s_safe_ts_entries_index);
+
+    // We don't own these objects, so just clear their pointers.
+    s_safe_ts_entries_ptr = nullptr;
+    s_watermarks_ptr = nullptr;
+}
+
+gaia_txn_id_t safe_ts_t::get_safe_truncation_ts()
+{
+    ASSERT_PRECONDITION(s_safe_ts_entries_ptr, "Expected pointer to safe_ts entries to be set!");
+    ASSERT_PRECONDITION(s_watermarks_ptr, "Expected watermarks pointer to be set!");
+
+    return s_safe_ts_entries_ptr->get_safe_truncation_ts(s_watermarks_ptr);
+}
+
 safe_ts_t::safe_ts_t(gaia_txn_id_t safe_ts)
     : m_ts(safe_ts)
 {
@@ -357,9 +383,11 @@ safe_ts_t::safe_ts_t(gaia_txn_id_t safe_ts)
 bool safe_ts_t::reserve()
 {
     ASSERT_PRECONDITION(m_ts.is_valid(), "Cannot reserve a safe_ts without a valid timestamp!");
-
     ASSERT_PRECONDITION(s_safe_ts_entries_ptr, "Expected safe_ts entries to be allocated!");
+    ASSERT_PRECONDITION(s_safe_ts_entries_index <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be valid!");
     ASSERT_PRECONDITION(s_safe_ts_values_ptr, "Expected safe_ts stack to be allocated!");
+    ASSERT_PRECONDITION(safe_ts_t::s_watermarks_ptr, "Expected watermarks pointer to be set!");
 
     DEBUG_ASSERT_INVARIANT(validate_saved_minimum(), "Failed to validate saved minimum at start of reservation!");
 
@@ -413,7 +441,13 @@ bool safe_ts_t::reserved() const
 
 safe_ts_t::~safe_ts_t()
 {
-    ASSERT_PRECONDITION(m_ts.is_valid() || !m_reserved, "Cannot have an reserved safe_ts with an invalid timestamp!")
+    ASSERT_PRECONDITION(m_ts.is_valid() || !m_reserved,
+        "Cannot have an reserved safe_ts with an invalid timestamp!")
+    ASSERT_PRECONDITION(s_safe_ts_entries_ptr, "Expected pointer to safe_ts entries to be set!");
+    ASSERT_INVARIANT(s_safe_ts_entries_index <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be valid!");
+    ASSERT_PRECONDITION(s_safe_ts_values_ptr, "Expected safe_ts stack to be allocated!");
+    ASSERT_PRECONDITION(s_watermarks_ptr, "Expected watermarks pointer to be set!");
 
     // If the timestamp is invalid (e.g. the object was moved-from) or was not
     // successfully reserved, we have nothing to do.
@@ -426,8 +460,6 @@ safe_ts_t::~safe_ts_t()
 
     // The destructor cannot fail, so we need to ensure that all
     // consistency conditions we already satisfied still hold.
-    ASSERT_INVARIANT(s_safe_ts_entries_ptr, "Expected pointer to safe_ts entries to be set!");
-    ASSERT_INVARIANT(s_safe_ts_values_ptr, "Expected safe_ts stack to be allocated!");
     ASSERT_INVARIANT(!s_safe_ts_values_ptr->empty(), "Expected safe_ts stack to be non-empty!");
 
     // Pop the safe_ts from the safe_ts stack.
@@ -440,6 +472,10 @@ safe_ts_t::~safe_ts_t()
     {
         ASSERT_INVARIANT(m_ts == s_min_safe_ts_value,
             "Timestamp must be the minimum if it is the only timestamp in the stack!");
+        // The minimum timestamp in the stack must have been reserved in the
+        // per-thread entry.
+        ASSERT_INVARIANT(m_ts == s_safe_ts_entries_ptr->get_reserved_ts(s_safe_ts_entries_index),
+            "Expected safe timestamp to be reserved for this thread!");
         // Invalidate the saved minimum.
         s_min_safe_ts_value = c_invalid_gaia_txn_id;
         // Release this thread's reserved safe_ts value.
@@ -452,6 +488,10 @@ safe_ts_t::~safe_ts_t()
     ASSERT_INVARIANT(m_ts >= s_min_safe_ts_value, "Timestamp cannot be smaller than the minimum timestamp!");
     if (m_ts == s_min_safe_ts_value)
     {
+         // The minimum timestamp in the stack must have been reserved in the
+        // per-thread entry.
+        ASSERT_INVARIANT(m_ts == s_safe_ts_entries_ptr->get_reserved_ts(s_safe_ts_entries_index),
+            "Expected safe timestamp to be reserved for this thread!");
         auto min_safe_ts = *std::min_element(s_safe_ts_values_ptr->begin(), s_safe_ts_values_ptr->end());
         ASSERT_INVARIANT(min_safe_ts >= s_min_safe_ts_value,
             "The new minimum timestamp cannot be smaller than the previous minimum timestamp!");

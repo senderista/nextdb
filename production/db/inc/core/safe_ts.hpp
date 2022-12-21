@@ -64,6 +64,19 @@ public:
     // This method cannot fail or throw.
     inline void release_safe_ts(size_t index, watermarks_t* watermarks);
 
+    // Returns the reserved safe_ts at the given index, or the invalid timestamp
+    // if no safe_ts is reserved.
+    inline gaia_txn_id_t get_reserved_ts(size_t index);
+
+    // Computes a "safe truncation timestamp", i.e., an (exclusive) upper bound
+    // below which all txn metadata entries can be safely reclaimed.
+    //
+    // The timestamp returned is guaranteed not to exceed any "safe timestamp"
+    // that was reserved before this method was called. For safety, callers must
+    // avoid accessing txn metadata older than a previously reserved "safe
+    // timestamp".
+    inline gaia_txn_id_t get_safe_truncation_ts(watermarks_t* watermarks);
+
 private:
     // A global array in which each session thread publishes a "safe timestamp"
     // that it needs to protect from memory reclamation. The minimum of all
@@ -84,12 +97,6 @@ private:
     // so we only allocate enough entries for the maximum allowed number of
     // session threads.
     std::atomic<gaia_txn_id_t::value_type> m_safe_ts_per_thread_entries[c_session_limit][2]{};
-
-    // REVIEW: Since we had to move the get_safe_truncation_ts() method into
-    // safe_ts_t, the simplest way to keep it working is to give that class
-    // access to m_safe_ts_per_thread_entries. This should probably be
-    // refactored.
-    friend class safe_ts_t;
 
     // The reserved status of each index into `m_safe_ts_per_thread_entries` is
     // tracked in this bitmap. Before calling any safe_ts API functions, each
@@ -158,17 +165,13 @@ public:
     // calling thread until initialize() is called again.
     static inline void finalize();
 
-    // This method computes a "safe truncation timestamp", i.e., an (exclusive)
-    // upper bound below which all txn metadata entries can be safely reclaimed.
-    //
-    // The timestamp returned is guaranteed not to exceed any "safe timestamp"
-    // that was reserved before this method was called.
+    // Delegates to safe_ts_entries_t::get_safe_truncation_ts().
     static inline gaia_txn_id_t get_safe_truncation_ts();
 
 private:
-    // This member is logically immutable, but it cannot be `const` because
-    // it needs to be set to an invalid value by the move
-    // constructor/assignment operator.
+    // This member is logically immutable, but it cannot be `const` because it
+    // needs to be set to an invalid value by the move constructor/assignment
+    // operator.
     gaia_txn_id_t m_ts{c_invalid_gaia_txn_id};
 
     // Indicates whether reserve() was successfully called.

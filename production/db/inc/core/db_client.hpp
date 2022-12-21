@@ -131,17 +131,17 @@ private:
     static bool validate_txn(gaia_txn_id_t commit_ts);
     static bool txn_logs_conflict(log_offset_t offset1, log_offset_t offset2);
 
-    static void perform_maintenance();
-    static void apply_txn_logs_to_shared_view();
-    static void gc_applied_txn_logs();
-    static void deallocate_object(gaia_offset_t offset);
-    static void update_post_gc_watermark();
-    static void truncate_txn_table();
+    static bool perform_maintenance();
+    static bool apply_txn_logs_to_shared_view();
+    static bool gc_applied_txn_logs();
+    static bool update_post_gc_watermark();
+    static bool truncate_txn_table();
     static char* get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts);
     static size_t get_txn_metadata_page_count_from_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
 
     static void apply_txn_log_from_ts(gaia_txn_id_t commit_ts);
     static void gc_txn_log_from_offset(log_offset_t log_offset, bool is_committed);
+    static void deallocate_object(gaia_offset_t offset);
     static void deallocate_txn_log(txn_log_t* txn_log, bool is_committed);
 
     static bool acquire_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);

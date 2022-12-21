@@ -18,6 +18,7 @@
 #include <sys/un.h>
 
 #include "gaia_internal/common/assert.hpp"
+#include "gaia_internal/common/backoff.hpp"
 #include "gaia_internal/common/scope_guard.hpp"
 #include "gaia_internal/common/socket_helpers.hpp"
 #include "gaia_internal/common/system_error.hpp"
@@ -29,6 +30,7 @@
 #include "safe_ts.hpp"
 
 using namespace gaia::common;
+using namespace gaia::common::backoff;
 using namespace gaia::db;
 using namespace gaia::db::memory_manager;
 using namespace gaia::db::transactions;
@@ -344,6 +346,7 @@ void client_t::commit_transaction()
 
     // This optimization to treat committing a read-only txn as a rollback
     // allows us to avoid any special cases for empty txn logs.
+    // REVIEW: Should read-only txns have to perform system maintenance tasks?
     if (txn_log()->record_count == 0)
     {
         rollback_transaction();
@@ -377,7 +380,15 @@ void client_t::commit_transaction()
     // all maintenance asynchronously in the background. Allowing this work to
     // delay beginning new transactions but not delay committing the current
     // transaction seems like a good compromise.
-    auto do_gc = make_scope_guard(perform_maintenance);
+    auto do_gc = make_scope_guard([&] {
+        // If we detect contention, then back off for about 5us (empirically
+        // determined to be the best interval).
+        bool contention_detected = perform_maintenance();
+        if (contention_detected)
+        {
+            spin_wait_5us();
+        }
+    });
 
     // Before registering the log, sort by locator for fast conflict detection.
     sort_log(txn_log());
@@ -836,24 +847,38 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 //    (It is possible for multiple GC tasks to concurrently or repeatedly
 //    decommit the same pages, but madvise(2) is idempotent and
 //    concurrency-safe.)
-void client_t::perform_maintenance()
+//
+// Returns true if contention was detected, false otherwise.
+bool client_t::perform_maintenance()
 {
+    bool contention_detected = false;
+
     // Attempt to apply all txn logs to the shared view, from the last value of
     // the post-apply watermark to the latest committed txn.
-    apply_txn_logs_to_shared_view();
+    contention_detected |= apply_txn_logs_to_shared_view();
 
     // Attempt to reclaim the resources of all txns from the post-GC watermark
     // to the post-apply watermark.
-    gc_applied_txn_logs();
+    contention_detected |= gc_applied_txn_logs();
+
+    // Finally, catch up the post-GC watermark.
+    // Unlike log application, we don't try to perform GC and advance the
+    // post-GC watermark in a single scan, because log application is strictly
+    // sequential, while GC is sequentially initiated but concurrently executed.
+    contention_detected |= update_post_gc_watermark();
 
     // Find a timestamp at which we can safely truncate the txn table, advance
     // the pre-truncate watermark to that timestamp, and truncate the txn table
     // at the highest page boundary less than the pre-truncate watermark.
-    truncate_txn_table();
+    contention_detected |= truncate_txn_table();
+
+    return contention_detected;
 }
 
-void client_t::apply_txn_logs_to_shared_view()
+bool client_t::apply_txn_logs_to_shared_view()
 {
+    bool contention_detected = false;
+
     // First get a snapshot of the timestamp counter for an upper bound on
     // the scan (we don't know yet if this is a begin_ts or commit_ts).
     gaia_txn_id_t last_allocated_ts = get_last_txn_id();
@@ -938,6 +963,10 @@ void client_t::apply_txn_logs_to_shared_view()
         if (get_watermarks()->get_watermark(watermark_type_t::pre_apply) != prev_ts
             || get_watermarks()->get_watermark(watermark_type_t::post_apply) != prev_ts)
         {
+            // Either the pre-apply watermark has been advanced since our
+            // previous read, or the post-apply watermark has not caught up with
+            // it, so we know another thread is active.
+            contention_detected = true;
             break;
         }
 
@@ -949,6 +978,8 @@ void client_t::apply_txn_logs_to_shared_view()
                 get_watermarks()->get_watermark(watermark_type_t::pre_apply) > static_cast<gaia_txn_id_t>(pre_apply_watermark),
                 "The watermark must have advanced if advance_watermark() failed!");
 
+            // Another thread concurrently advanced the watermark.
+            contention_detected = true;
             break;
         }
 
@@ -980,10 +1011,14 @@ void client_t::apply_txn_logs_to_shared_view()
         // timestamp.
         ASSERT_INVARIANT(has_advanced_watermark, "Couldn't advance the post-apply watermark!");
     }
+
+    return contention_detected;
 }
 
-void client_t::gc_applied_txn_logs()
+bool client_t::gc_applied_txn_logs()
 {
+    bool contention_detected = false;
+
     // Ensure we clean up our cached chunk IDs when we exit this task.
     auto cleanup_fd = make_scope_guard([&] { map_gc_chunks_to_versions().clear(); });
 
@@ -1033,6 +1068,8 @@ void client_t::gc_applied_txn_logs()
             // thread has initiated GC of this txn log.
             if (txn_log->begin_ts() != begin_ts)
             {
+                // NB: We don't set contention_detected = true here because we can still
+                // make progress (GC is concurrent, unlike log application).
                 continue;
             }
 
@@ -1043,8 +1080,12 @@ void client_t::gc_applied_txn_logs()
             // have invalidated the txn log after the check we just performed).
             // In the second case, we should abort the scan because we cannot
             // make progress.
+            // REVIEW: Should we change the signature of invalidate() so we can
+            // distinguish between these two cases in order to reliably detect
+            // contention?
             if (!txn_log->invalidate(begin_ts))
             {
+                contention_detected = true;
                 break;
             }
 
@@ -1084,11 +1125,7 @@ void client_t::gc_applied_txn_logs()
         }
     }
 
-    // Finally, catch up the post-GC watermark.
-    // Unlike log application, we don't try to perform GC and advance the
-    // post-GC watermark in a single scan, because log application is strictly
-    // sequential, while GC is sequentially initiated but concurrently executed.
-    update_post_gc_watermark();
+    return contention_detected;
 }
 
 void client_t::deallocate_object(gaia_offset_t offset)
@@ -1125,8 +1162,10 @@ void client_t::deallocate_object(gaia_offset_t offset)
     chunk_manager.deallocate(offset);
 }
 
-void client_t::update_post_gc_watermark()
+bool client_t::update_post_gc_watermark()
 {
+    bool contention_detected = false;
+
     // Get a snapshot of the post-apply watermark, for an upper bound on the scan.
     safe_watermark_t post_apply_watermark(watermark_type_t::post_apply);
 
@@ -1187,12 +1226,16 @@ void client_t::update_post_gc_watermark()
                 get_watermarks()->get_watermark(watermark_type_t::post_gc) > static_cast<gaia_txn_id_t>(post_gc_watermark),
                 "The watermark must have advanced if advance_watermark() failed!");
 
+            // Another thread concurrently advanced the watermark.
+            contention_detected = true;
             break;
         }
     }
+
+    return contention_detected;
 }
 
-void client_t::truncate_txn_table()
+bool client_t::truncate_txn_table()
 {
     // Get a snapshot of the pre-truncate watermark before advancing it.
     gaia_txn_id_t prev_pre_truncate_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_truncate);
@@ -1207,7 +1250,7 @@ void client_t::truncate_txn_table()
 
     if (pages_to_decommit_upper_bound < transactions::c_min_pages_to_free)
     {
-        return;
+        return false;
     }
 
     // Compute a safe truncation timestamp.
@@ -1221,7 +1264,7 @@ void client_t::truncate_txn_table()
     // when they were published (and will later fail validation).
     if (new_pre_truncate_watermark <= prev_pre_truncate_watermark)
     {
-        return;
+        return false;
     }
 
     // Try to advance the pre-truncate watermark.
@@ -1233,7 +1276,8 @@ void client_t::truncate_txn_table()
             get_watermarks()->get_watermark(watermark_type_t::pre_truncate) > prev_pre_truncate_watermark,
             "The watermark must have advanced if advance_watermark() failed!");
 
-        return;
+        // Another thread concurrently advanced the watermark.
+        return true;
     }
 
     // We advanced the pre-truncate watermark, so actually truncate the txn
@@ -1269,6 +1313,8 @@ void client_t::truncate_txn_table()
             throw_system_error("madvise(MADV_DONTNEED) failed!");
         }
     }
+
+    return false;
 }
 
 char* client_t::get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts)

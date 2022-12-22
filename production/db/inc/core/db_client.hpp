@@ -128,7 +128,7 @@ private:
 
     static void sort_log(txn_log_t* txn_log);
     static gaia_txn_id_t submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offset);
-    static bool validate_txn(gaia_txn_id_t commit_ts);
+    static bool validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session = true);
     static bool txn_logs_conflict(log_offset_t offset1, log_offset_t offset2);
 
     static bool perform_maintenance();

@@ -500,7 +500,8 @@ void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_
         // Validate any undecided submitted txns.
         if (get_txn_metadata()->is_commit_ts(ts) && get_txn_metadata()->is_txn_validating(ts))
         {
-            bool is_committed = validate_txn(ts);
+            bool is_committing_session = false;
+            bool is_committed = validate_txn(ts, is_committing_session);
 
             // Update the current txn's decided status.
             get_txn_metadata()->update_txn_decision(ts, is_committed);
@@ -661,7 +662,7 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
     return commit_ts;
 }
 
-bool client_t::validate_txn(gaia_txn_id_t commit_ts)
+bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
 {
     gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
 
@@ -669,6 +670,47 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
     if (commit_ts == begin_ts + 1)
     {
         return true;
+    }
+
+    // We assume that the commit_ts is already protected by a safe_ts that was
+    // reserved earlier, but we need to protect the begin_ts with a new safe_ts,
+    // if this is not the session originally committing the txn
+    // (commit_transaction() protects its begin_ts before acquiring its
+    // commit_ts). There are currently 2 scenarios where a txn can be validated
+    // by a session that did not commit it:
+    //
+    // 1. In begin_transaction(), after a begin_ts is acquired, a safe_ts is
+    //    reserved for the pre-apply watermark, and all undecided txns between
+    //    the pre-apply watermark and the new begin_ts must be validated.
+    //
+    // 2. In commit_transaction(), when a safe_ts has been reserved for the
+    //    begin_ts of the committing txn and an undecided txn is found within
+    //    the conflict window.
+    //
+    // In case 1), the commit_ts is already protected by a safe_ts, but the
+    // begin_ts may not be, so it is unsafe to scan the conflict window before
+    // reserving a safe_ts for the begin_ts. In case 2), the begin_ts of the
+    // committing txn is protected by a safe_ts, but the begin_ts of an
+    // undecided txn within the conflict window may precede the begin_ts of the
+    // committing txn, so we must reserve a safe_ts to protect the begin_ts of
+    // that undecided txn before validating it. Note that while in both these
+    // cases, any undecided txn originally had its begin_ts protected by its
+    // committing session, that session may have completed validation and
+    // released its reserved safe_ts before a non-committing session completed
+    // its validation of the txn, so each validation of an undecided txn must
+    // separately reserve a safe_ts to protect the txn's begin_ts.
+    safe_ts_t safe_begin_ts(begin_ts);
+    if (!is_committing_session)
+    {
+        bool safe_ts_succeeded = safe_begin_ts.reserve();
+        if (!safe_ts_succeeded)
+        {
+            // If we failed to reserve the begin_ts, it must be because its
+            // commit_ts was already decided (the post-GC watermark cannot
+            // overtake the begin_ts otherwise).
+            ASSERT_INVARIANT(get_txn_metadata()->is_txn_decided(commit_ts),
+                "safe_ts reservation of a begin_ts can only fail if its commit_ts was decided!");
+        }
     }
 
     // Acquire a single reference to the committing txn's log for the duration
@@ -715,7 +757,8 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                     c_message_preceding_txn_should_have_been_validated);
 
                 // Recursively validate the current undecided txn.
-                bool is_committed = validate_txn(ts);
+                bool is_committing_session = false;
+                bool is_committed = validate_txn(ts, is_committing_session);
 
                 // Update the current txn's decided status.
                 get_txn_metadata()->update_txn_decision(ts, is_committed);

@@ -48,5 +48,9 @@ constexpr size_t c_stream_batch_size{1UL << 10};
 // We use this as the dummy payload of a session reply message from the server.
 constexpr uint64_t c_session_magic{0xcafebabedecafbad};
 
+// Time to spend backing off in a spin loop after contention was detected during GC.
+// This should be comparable to (or less than) context switch latency (~5us).
+constexpr size_t c_contention_backoff_us{5};
+
 } // namespace db
 } // namespace gaia

@@ -386,7 +386,7 @@ void client_t::commit_transaction()
         bool contention_detected = perform_maintenance();
         if (contention_detected)
         {
-            spin_wait_5us();
+            spin_wait(c_contention_backoff_us * c_pause_iterations_per_us);
         }
     });
 

@@ -150,9 +150,6 @@ public:
     // otherwise.
     inline bool reserve();
 
-    // Returns true if reserve() was successfully called, false otherwise.
-    inline bool reserved() const;
-
     // This method must be called before instantiating any safe_ts_t objects on
     // the current thread. It is intended to be called during session
     // initialization.

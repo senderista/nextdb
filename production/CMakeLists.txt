@@ -25,6 +25,10 @@ option(ENABLE_PROFILING_SUPPORT "Instrument binaries for profiling" OFF)
 
 option(DISABLE_ASSERTS "Disable assertions" OFF)
 
+# This safety feature reduces throughput by ~40% for a single thread, so we need
+# to be able to disable it easily to measure baseline performance.
+option(DISABLE_SAFE_TIMESTAMPS "Disable safe timestamps" OFF)
+
 option(DISABLE_CCACHE "Disable ccache unconditionally" OFF)
 
 option(ENABLE_CLANG_TIDY "Enable Clang-Tidy to be specified externally" OFF)
@@ -106,6 +110,8 @@ target_compile_definitions(gaia_build_options INTERFACE $<$<CONFIG:Debug>:DEBUG>
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>:DISABLE_ASSERTS>)
 # Disabling asserts will produce bogus unused variable warnings.
 target_compile_options(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>:-Wno-unused-parameter -Wno-unused-lambda-capture -Wno-unused-variable -Wno-unused-but-set-variable>)
+# Propagate the DISABLE_SAFE_TIMESTAMPS option to a macro definition.
+target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_SAFE_TIMESTAMPS}>:DISABLE_SAFE_TIMESTAMPS>)
 
 # Always use libc++ for better C++20 and sanitizer support.
 # (For eventual MemorySanitizer support, we need all targets in debug builds to

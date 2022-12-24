@@ -382,6 +382,9 @@ safe_ts_t::safe_ts_t(gaia_txn_id_t safe_ts)
 
 bool safe_ts_t::reserve()
 {
+#ifdef DISABLE_SAFE_TIMESTAMPS
+    return true;
+#endif
     ASSERT_PRECONDITION(m_ts.is_valid(), "Cannot reserve a safe_ts without a valid timestamp!");
     ASSERT_PRECONDITION(s_safe_ts_entries_ptr, "Expected safe_ts entries to be allocated!");
     ASSERT_PRECONDITION(s_safe_ts_entries_index <= safe_ts_entries_t::c_max_safe_ts_index,
@@ -432,11 +435,6 @@ safe_ts_t& safe_ts_t::operator=(safe_ts_t&& other) noexcept
 safe_ts_t::operator gaia_txn_id_t() const
 {
     return m_ts;
-}
-
-bool safe_ts_t::reserved() const
-{
-    return m_reserved;
 }
 
 safe_ts_t::~safe_ts_t()
@@ -522,7 +520,7 @@ safe_watermark_t::safe_watermark_t(watermark_type_t watermark_type)
 
     // Retry until we have a valid safe_ts for the current value of
     // the watermark.
-    while (!m_safe_ts.reserved())
+    while (true)
     {
         gaia_txn_id_t watermark_ts = safe_ts_t::s_watermarks_ptr->get_watermark(watermark_type);
 
@@ -538,23 +536,23 @@ safe_watermark_t::safe_watermark_t(watermark_type_t watermark_type)
         // because the move assignment operator does not release the "safe
         // timestamp" that was reserved in the local safe_ts's constructor.)
         safe_ts_t safe_ts(watermark_ts);
-        if (!safe_ts.reserve())
+        if (safe_ts.reserve())
         {
-            continue;
+            // Reservation was successful, so move-initialize our safe_ts member.
+            m_safe_ts = std::move(safe_ts);
+
+            // NB: It is legal to call any method without preconditions on a
+            // moved-from safe_ts, because the standard specifies that
+            // "Moved-from objects shall be placed in a valid but unspecified
+            // state."
+            // NOLINTBEGIN(clang-analyzer-cplusplus.Move)
+            ASSERT_POSTCONDITION(
+                static_cast<gaia_txn_id_t>(safe_ts).is_valid() == false,
+                "safe_ts should contain an invalid timestamp after moving!");
+            // NOLINTEND(clang-analyzer-cplusplus.Move)
+
+            break;
         }
-
-        // Reservation was successful, so move-initialize our safe_ts member.
-        m_safe_ts = std::move(safe_ts);
-
-        // NB: It is legal to call any method without preconditions on a
-        // moved-from safe_ts, because the standard specifies that
-        // "Moved-from objects shall be placed in a valid but unspecified
-        // state."
-        // NOLINTBEGIN(clang-analyzer-cplusplus.Move)
-        ASSERT_POSTCONDITION(
-            static_cast<gaia_txn_id_t>(safe_ts).is_valid() == false,
-            "safe_ts should contain an invalid timestamp after moving!");
-        // NOLINTEND(clang-analyzer-cplusplus.Move)
     }
 }
 

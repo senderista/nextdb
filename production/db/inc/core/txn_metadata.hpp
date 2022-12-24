@@ -30,7 +30,11 @@ namespace transactions
 
 // The minimum value for the upper bound on unused pages that must exist
 // before we attempt to decommit unused pages in the txn metadata map.
+#ifdef TXN_METADATA_GC_IMMEDIATE
+constexpr size_t c_min_pages_to_free = 1;
+#else
 constexpr size_t c_min_pages_to_free = 64;
+#endif
 
 // This class encapsulates the txn metadata array. It handles all reads, writes,
 // and synchronization on the metadata array, but has no knowledge of the

@@ -32,6 +32,11 @@ option(DISABLE_SAFE_TIMESTAMPS "Disable safe timestamps" OFF)
 # Enable this option to stress-test safe timestamp correctness.
 option(TXN_METADATA_GC_IMMEDIATE "Immediately GC txn metadata" OFF)
 
+# This option improves performance when chunks are quickly reused (by reducing
+# page faults and physical page allocation/zeroing), but may increase physical
+# memory usage otherwise.
+option(DISABLE_CHUNK_DECOMMIT "Don't decommit physical memory when a chunk is deallocated" OFF)
+
 option(DISABLE_CCACHE "Disable ccache unconditionally" OFF)
 
 option(ENABLE_CLANG_TIDY "Enable Clang-Tidy to be specified externally" OFF)
@@ -117,6 +122,8 @@ target_compile_options(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_SAFE_TIMESTAMPS}>:DISABLE_SAFE_TIMESTAMPS>)
 # Propagate the TXN_METADATA_GC_IMMEDIATE option to a macro definition.
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${TXN_METADATA_GC_IMMEDIATE}>:TXN_METADATA_GC_IMMEDIATE>)
+# Propagate the DISABLE_CHUNK_DECOMMIT option to a macro definition.
+target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_CHUNK_DECOMMIT}>:DISABLE_CHUNK_DECOMMIT>)
 
 # Always use libc++ for better C++20 and sanitizer support.
 # (For eventual MemorySanitizer support, we need all targets in debug builds to

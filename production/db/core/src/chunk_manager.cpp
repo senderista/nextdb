@@ -362,7 +362,9 @@ bool chunk_manager_t::try_deallocate_chunk(chunk_version_t initial_version)
     // If we successfully transitioned the chunk to DEALLOCATING state, then it
     // cannot be reused until we transition it to EMPTY state, so we can safely
     // decommit all data pages.
+#ifndef DISABLE_CHUNK_DECOMMIT
     decommit_data_pages();
+#endif
 
     // This transition must succeed because only the deallocating thread can
     // legally transition the chunk from DEALLOCATING to EMPTY.

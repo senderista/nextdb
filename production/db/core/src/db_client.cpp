@@ -647,6 +647,19 @@ void client_t::sort_log(txn_log_t* txn_log)
         });
 }
 
+// NB: The comparison logic here and in sort_log() must be identical.
+bool client_t::is_log_sorted(txn_log_t* txn_log)
+{
+    return std::is_sorted(
+        &txn_log->log_records[0],
+        &txn_log->log_records[txn_log->record_count],
+        [](const log_record_t& lhs, const log_record_t& rhs) {
+            auto lhs_pair = std::pair{lhs.locator, lhs.sequence};
+            auto rhs_pair = std::pair{rhs.locator, rhs.sequence};
+            return lhs_pair < rhs_pair;
+        });
+}
+
 gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offset)
 {
     ASSERT_PRECONDITION(get_txn_metadata()->is_txn_active(begin_ts), "Not an active transaction!");
@@ -1501,6 +1514,11 @@ bool client_t::txn_logs_conflict(log_offset_t offset1, log_offset_t offset2)
 {
     txn_log_t* log1 = get_logs()->get_log_from_offset(offset1);
     txn_log_t* log2 = get_logs()->get_log_from_offset(offset2);
+
+    // Verify that the logs are sorted by locator/sequence.
+    DEBUG_ASSERT_PRECONDITION(
+        is_log_sorted(log1) && is_log_sorted(log2),
+        "Logs must be sorted before conflict detection!");
 
     // Perform standard merge intersection and terminate on the first conflict found.
     size_t log1_idx = 0, log2_idx = 0;

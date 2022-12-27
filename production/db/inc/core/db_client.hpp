@@ -126,6 +126,8 @@ private:
         gaia_txn_id_t begin_ts, std::vector<std::pair<gaia_txn_id_t,
         log_offset_t>>& txn_ids_with_log_offsets_for_snapshot);
 
+    // This is only intended for debug asserts.
+    static bool is_log_sorted(txn_log_t* txn_log);
     static void sort_log(txn_log_t* txn_log);
     static gaia_txn_id_t submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offset);
     static bool validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session = true);

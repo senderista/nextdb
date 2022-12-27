@@ -1353,20 +1353,14 @@ bool client_t::truncate_txn_table()
     {
         char* prev_page_start_address = get_txn_metadata_page_address_from_ts(prev_pre_truncate_watermark);
 
-        // MADV_FREE seems like the best fit for our needs, since it allows
-        // the OS to lazily reclaim decommitted pages. (If we move the txn
-        // table to a shared mapping (e.g. memfd), then we'll need to switch
-        // to MADV_REMOVE.)
-        //
-        // REVIEW: MADV_FREE makes it impossible to monitor RSS usage, so
-        // use MADV_DONTNEED unless we actually need better performance (see
-        // https://github.com/golang/go/issues/42330 for a discussion of
-        // these issues). Moreover, we will never reuse the decommitted
-        // virtual memory, so using MADV_FREE wouldn't save the cost of hard
-        // page faults on first access to decommitted pages.
-        if (-1 == ::madvise(prev_page_start_address, pages_to_decommit_count * c_page_size_in_bytes, MADV_DONTNEED))
+        // MADV_FREE seems like the best fit for our needs, since it allows the OS
+        // to lazily reclaim decommitted pages. However, it returns EINVAL when used
+        // with MAP_SHARED, so we need to use MADV_REMOVE (which works with memfd
+        // objects). According to the manpage, madvise(MADV_REMOVE) is equivalent to
+        // fallocate(FALLOC_FL_PUNCH_HOLE).
+        if (-1 == ::madvise(prev_page_start_address, pages_to_decommit_count * c_page_size_in_bytes, MADV_REMOVE))
         {
-            throw_system_error("madvise(MADV_DONTNEED) failed!");
+            throw_system_error("madvise(MADV_REMOVE) failed!");
         }
     }
 

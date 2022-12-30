@@ -290,9 +290,15 @@ void client_t::begin_transaction()
     // retries if it is concurrently sealed.
     ASSERT_INVARIANT(txn_id().is_valid(), "Begin timestamp is invalid!");
 
+    // We use this flag to apply various single-thread optimizations.
+    bool is_snapshot_window_empty = (txn_id() == latest_applied_commit_ts() + 1);
+
     // Ensure that there are no undecided txns in our snapshot window.
-    auto pre_apply_watermark = get_safe_watermark(watermark_type_t::pre_apply);
-    validate_txns_in_range(pre_apply_watermark + 1, txn_id());
+    if (is_snapshot_window_empty)
+    {
+        auto pre_apply_watermark = get_safe_watermark(watermark_type_t::pre_apply);
+        validate_txns_in_range(pre_apply_watermark + 1, txn_id());
+    }
 
     // Allocate new txn log.
     s_session_context->txn_context->txn_log_offset = get_logs()->allocate_log_offset(txn_id());
@@ -301,14 +307,15 @@ void client_t::begin_transaction()
         throw transaction_log_allocation_failure_internal();
     }
 
-    // If our snapshot is already mapped, and we can pin all committed txn logs
-    // between latest_applied_commit_ts and our begin_ts, then we can reuse our
+    // If our snapshot is already mapped, and either the snapshot window is
+    // empty or we can pin all committed txn logs between
+    // latest_applied_commit_ts and our begin_ts, then we can reuse our
     // snapshot. Otherwise, we must remap our snapshot.
     bool can_reuse_snapshot = (
         private_locators().is_set() &&
         latest_applied_commit_ts().is_valid() &&
-        get_txn_log_offsets_in_range(
-            latest_applied_commit_ts() + 1, txn_id(), txn_logs_for_snapshot()));
+        (is_snapshot_window_empty || get_txn_log_offsets_in_range(
+            latest_applied_commit_ts() + 1, txn_id(), txn_logs_for_snapshot())));
 
     ASSERT_POSTCONDITION(can_reuse_snapshot || txn_logs_for_snapshot().empty(),
         "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
@@ -322,15 +329,21 @@ void client_t::begin_transaction()
         private_locators().open(s_session_context->fd_locators, manage_fd, is_shared);
 
         // Get all txn logs that might need to be applied to the new snapshot.
-        get_txn_log_offsets_for_snapshot(txn_id(), txn_logs_for_snapshot());
+        if (!is_snapshot_window_empty)
+        {
+            get_txn_log_offsets_for_snapshot(txn_id(), txn_logs_for_snapshot());
+        }
     }
 
     // Apply (in commit_ts order) all txn logs that were committed before our
     // begin_ts and may not have been applied to our snapshot.
-    for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
+    if (!is_snapshot_window_empty)
     {
-        apply_log_from_offset(private_locators().data(), log_offset);
-        get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
+        for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
+        {
+            apply_log_from_offset(private_locators().data(), log_offset);
+            get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
+        }
     }
 
     cleanup_txn_context.dismiss();
@@ -353,7 +366,7 @@ void client_t::rollback_transaction()
         s_session_context->txn_context->clear();
     });
 
-    // REVIEW: Could just apply undo log and try to reuse snapshot.
+    // Apply our undo log to roll back any changes to our private snapshot.
     auto cleanup_snapshot = make_scope_guard([&] {
         private_locators().close();
         s_session_context->latest_applied_commit_ts = c_invalid_gaia_txn_id;
@@ -485,8 +498,15 @@ void client_t::commit_transaction()
     // Register the committing txn under a new commit timestamp.
     gaia_txn_id_t commit_ts = submit_txn(txn_id(), txn_log_offset());
 
+    // We use this flag to apply various single-thread optimizations.
+    bool is_conflict_window_empty = (commit_ts == txn_id() + 1);
+
     // Validate the txn against all other committed txns in the conflict window.
-    bool is_committed = validate_txn(commit_ts);
+    bool is_committed = true;
+    if (!is_conflict_window_empty)
+    {
+        is_committed = validate_txn(commit_ts);
+    }
 
     // Update this txn's commit_ts entry with the commit decision.
     get_txn_metadata()->update_txn_decision(commit_ts, is_committed);
@@ -521,21 +541,31 @@ void client_t::commit_transaction()
     // applying our own log twice. But applying txn logs to snapshots is
     // idempotent, so this is benign, and cheaper than applying our undo log
     // first to avoid the duplicate log application.
-    bool can_apply_logs = get_txn_log_offsets_in_range(
-        txn_id() + 1, commit_ts, txn_logs_for_snapshot());
 
-    ASSERT_POSTCONDITION(can_apply_logs || txn_logs_for_snapshot().empty(),
-        "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
+    // If the conflict window is empty, then we already applied our own log,
+    // which is the only unapplied committed log since our begin_ts.
+    bool can_apply_logs = is_conflict_window_empty;
+    if (!is_conflict_window_empty)
+    {
+        can_apply_logs = get_txn_log_offsets_in_range(
+            txn_id() + 1, commit_ts, txn_logs_for_snapshot());
+
+        ASSERT_POSTCONDITION(can_apply_logs || txn_logs_for_snapshot().empty(),
+            "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
+
+        if (can_apply_logs)
+        {
+            // Apply all logs in commit_ts order.
+            for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
+            {
+                apply_log_from_offset(private_locators().data(), log_offset);
+                get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
+            }
+        }
+    }
 
     if (can_apply_logs)
     {
-        // Apply all logs in commit_ts order.
-        for (const auto& [txn_id, log_offset] : txn_logs_for_snapshot())
-        {
-            apply_log_from_offset(private_locators().data(), log_offset);
-            get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
-        }
-
         // Remember the latest log we applied so we can reuse this snapshot.
         s_session_context->latest_applied_commit_ts = commit_ts;
 

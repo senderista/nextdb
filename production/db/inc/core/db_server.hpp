@@ -145,6 +145,8 @@ private:
 
     static void init_shared_memory();
 
+    static void init_txn_history();
+
     static sigset_t get_masked_signals();
 
     static void signal_handler(sigset_t sigset, int& signum);

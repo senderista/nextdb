@@ -43,14 +43,6 @@ static constexpr char c_message_validating_txn_should_have_been_validated_before
 static constexpr char c_message_preceding_txn_should_have_been_validated[]
     = "A transaction with commit timestamp preceding this transaction's begin timestamp is undecided!";
 
-void client_t::txn_cleanup()
-{
-    // Ensure the cleaning of the txn context.
-    auto cleanup_txn_context = make_scope_guard([&] {
-        s_session_context->txn_context->clear();
-    });
-}
-
 int client_t::get_session_socket(const std::string& socket_name)
 {
     // Unlike the session socket on the server, this socket must be blocking,
@@ -191,17 +183,27 @@ void client_t::begin_session()
     bool is_shared = true;
     shared_locators().open(s_session_context->fd_locators, manage_fd, is_shared);
 
-    // Initialize thread-local data for safe timestamp mechanism.
+    // Initialize thread-local data for txn metadata protection.
     // This MUST be done *after* initializing the shared-memory mappings!
-    // TODO: handle failure (throw new exception type?)
-    safe_ts_t::initialize(get_safe_ts_entries(), get_watermarks());
-    auto cleanup_safe_ts_data = make_scope_guard([] {
-        safe_ts_t::finalize();
+
+    // Reserve this thread's safe_ts entries index.
+    ASSERT_PRECONDITION(safe_ts_entries_index() == safe_ts_entries_t::c_invalid_safe_ts_index,
+        "safe_ts entries index should be invalid!");
+    s_session_context->safe_ts_entries_index = get_safe_ts_entries()->reserve_safe_ts_index();
+    if (safe_ts_entries_index() == safe_ts_entries_t::c_invalid_safe_ts_index)
+    {
+        throw safe_ts_failure_internal();
+    }
+    ASSERT_POSTCONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be in valid range!");
+    auto cleanup_safe_ts_entry = make_scope_guard([&] {
+        // This automatically invalidates the entry at safe_ts_entries_index().
+        get_safe_ts_entries()->release_safe_ts_index(s_session_context->safe_ts_entries_index);
     });
 
     init_memory_manager();
 
-    cleanup_safe_ts_data.dismiss();
+    cleanup_safe_ts_entry.dismiss();
     cleanup_fd_locators.dismiss();
     cleanup_session_context.dismiss();
 }
@@ -212,9 +214,13 @@ void client_t::end_session()
     verify_no_txn();
 
     auto cleanup_session_context = make_scope_guard([&] {
-        // Clean up thread-local data for safe timestamp mechanism.
-        // This MUST be called *before* cleaning up session context!
-        safe_ts_t::finalize();
+        // Release this thread's safe_ts entries index.
+        // NB: This MUST be called *before* cleaning up session context!
+        get_safe_ts_entries()->release_safe_ts_index(s_session_context->safe_ts_entries_index);
+        // This automatically invalidates the entry at safe_ts_entries_index().
+        ASSERT_POSTCONDITION(safe_ts_entries_index() == safe_ts_entries_t::c_invalid_safe_ts_index,
+            "safe_ts entries index must be invalid!");
+
         // The session_context destructor will close the session socket.
         delete s_session_context;
         s_session_context = nullptr;
@@ -239,11 +245,43 @@ void client_t::begin_transaction()
         "Transaction context should not be initialized already at the start of a new transaction!");
 
     // Clean up all transaction-local session state.
-    auto cleanup = make_scope_guard(txn_cleanup);
+    auto cleanup_txn_context = make_scope_guard([&] {
+        s_session_context->txn_context->clear();
+    });
 
     auto cleanup_snapshot_logs = make_scope_guard([&] {
         txn_logs_for_snapshot().clear();
     });
+
+    // Protect all txn metadata accessed by this function. Reserving a timestamp
+    // equal to the value of the post-GC watermark read before the begin_ts is
+    // acquired is sufficient to ensure that all txn metadata scanned within the
+    // snapshot window (i.e., post-apply watermark to begin_ts) and within the
+    // conflict window of each undecided txn within the snapshot window is
+    // protected from concurrent reclamation. The argument is as follows:
+    //
+    // 1. At any particular time, the pre-apply and post-apply watermarks are at
+    //    least as recent as the post-GC watermark, and any value of the post-GC
+    //    watermark after reserving its initially observed value is at least as
+    //    recent as the reserved value, so the reserved value of the post-GC
+    //    watermark protects all later values of the pre-apply, post-apply, and
+    //    post-GC watermarks, and therefore all scans with those values as their
+    //    left endpoint.
+    //
+    // 2. Any undecided txn with its commit_ts within the snapshot window must
+    //    have its begin_ts preceded by the current value of the post-GC
+    //    watermark, because the post-GC watermark cannot advance past the
+    //    begin_ts of an undecided txn. Therefore, when the commit_ts status of
+    //    an undecided txn was read as VALIDATING, the post-GC watermark must
+    //    have been in the past of its begin_ts, and that value of the post-GC
+    //    watermark must have been at least as recent as the value of the
+    //    post-GC watermark that was reserved before the new txn's begin_ts was
+    //    acquired. Therefore, the entire conflict window of any undecided txn
+    //    with a commit_ts within the snapshot window of the new txn must be
+    //    protected by the reserved value of the post-GC watermark.
+
+    protect_txn_metadata();
+    auto cleanup_txn_metadata_protection = make_scope_guard(unprotect_txn_metadata);
 
     // Allocate a new begin_ts for this txn and initialize its metadata in the txn table.
     s_session_context->txn_context->txn_id = get_txn_metadata()->register_begin_ts();
@@ -253,10 +291,8 @@ void client_t::begin_transaction()
     ASSERT_INVARIANT(txn_id().is_valid(), "Begin timestamp is invalid!");
 
     // Ensure that there are no undecided txns in our snapshot window.
-    {
-        safe_watermark_t pre_apply_watermark(watermark_type_t::pre_apply);
-        validate_txns_in_range(static_cast<gaia_txn_id_t>(pre_apply_watermark) + 1, txn_id());
-    }
+    auto pre_apply_watermark = get_safe_watermark(watermark_type_t::pre_apply);
+    validate_txns_in_range(pre_apply_watermark + 1, txn_id());
 
     // Allocate new txn log.
     s_session_context->txn_context->txn_log_offset = get_logs()->allocate_log_offset(txn_id());
@@ -297,7 +333,7 @@ void client_t::begin_transaction()
         get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
     }
 
-    cleanup.dismiss();
+    cleanup_txn_context.dismiss();
 }
 
 void client_t::rollback_transaction()
@@ -308,8 +344,14 @@ void client_t::rollback_transaction()
         s_session_context->txn_context->initialized(),
         "Transaction context should be initialized already at the end of a transaction!");
 
+    // Protect all txn metadata accessed by this function.
+    protect_txn_metadata();
+    auto cleanup_txn_metadata_protection = make_scope_guard(unprotect_txn_metadata);
+
     // Clean up all transaction-local session state.
-    auto cleanup = make_scope_guard(txn_cleanup);
+    auto cleanup_txn_context = make_scope_guard([&] {
+        s_session_context->txn_context->clear();
+    });
 
     // REVIEW: Could just apply undo log and try to reuse snapshot.
     auto cleanup_snapshot = make_scope_guard([&] {
@@ -346,7 +388,8 @@ void client_t::commit_transaction()
 
     // This optimization to treat committing a read-only txn as a rollback
     // allows us to avoid any special cases for empty txn logs.
-    // REVIEW: Should read-only txns have to perform system maintenance tasks?
+    // REVIEW: Should read-only txns have to perform system maintenance tasks
+    // (arguably yes because they force retaining obsolete versions)?
     if (txn_log()->record_count == 0)
     {
         rollback_transaction();
@@ -354,7 +397,9 @@ void client_t::commit_transaction()
     }
 
     // Clean up all transaction-local session state when we exit.
-    auto cleanup = make_scope_guard(txn_cleanup);
+    auto cleanup_txn_context = make_scope_guard([&] {
+        s_session_context->txn_context->clear();
+    });
 
     auto cleanup_snapshot_logs = make_scope_guard([&] {
         txn_logs_for_snapshot().clear();
@@ -371,19 +416,63 @@ void client_t::commit_transaction()
         s_session_context->latest_applied_commit_ts = c_invalid_gaia_txn_id;
     });
 
+    // Protect all txn metadata accessed by this function. Reserving a timestamp
+    // equal to the value of the post-GC watermark read before the commit_ts is
+    // acquired is sufficient to ensure that all txn metadata scanned within the
+    // conflict window of the committing txn (i.e., from its begin_ts to its
+    // commit_ts) and within the conflict window of each undecided txn whose
+    // commit_ts is within the committing txn's conflict window is protected
+    // from concurrent reclamation. The argument is as follows:
+    //
+    // 1. The post-GC watermark cannot advance past the begin_ts of an undecided
+    //    txn, and the committing txn was undecided when the post-GC watermark's
+    //    value was reserved (it could not have been concurrently validated
+    //    because its commit_ts had not yet been acquired), so the post-GC
+    //    watermark preceded the committing txn's begin_ts when it was reserved,
+    //    and therefore the entire conflict window of the committing txn is
+    //    protected by the reserved post-GC watermark, until it is released by
+    //    the committing session thread.
+    //
+    // 2. Any undecided txn with its commit_ts within the committing txn's
+    //    conflict window must have its begin_ts preceded by the current value
+    //    of the post-GC watermark, because the post-GC watermark cannot advance
+    //    past the begin_ts of an undecided txn. Therefore, when the commit_ts
+    //    status of an undecided txn was read as VALIDATING, the post-GC
+    //    watermark must have been in the past of its begin_ts, and that value
+    //    of the post-GC watermark must have been at least as recent as the
+    //    value of the post-GC watermark that was reserved before the committing
+    //    txn's begin_ts was acquired. Therefore, the entire conflict window of
+    //    any undecided txn with a commit_ts within the conflict window of the
+    //    committing txn must be protected by the reserved value of the post-GC
+    //    watermark.
+
+    // NB: The corresponding call to unprotect_txn_metadata() must be made after
+    // txn log maintenance is complete and before txn metadata maintenance is
+    // performed (so that advancing the pre-truncate watermark is not obstructed
+    // by a reserved timestamp).
+
+    protect_txn_metadata();
+    auto cleanup_txn_metadata_protection = make_scope_guard(unprotect_txn_metadata);
+
     // Update watermarks and perform associated maintenance tasks. This will
     // block new transactions on this session thread, but that is a feature, not
     // a bug, because it provides natural backpressure on clients who submit
-    // long-running transactions that prevent old versions and logs from being
-    // freed. This approach helps keep the system from accumulating more
-    // deferred work than it can ever retire, which is a problem with performing
-    // all maintenance asynchronously in the background. Allowing this work to
-    // delay beginning new transactions but not delay committing the current
-    // transaction seems like a good compromise.
+    // long-running transactions that prevent resources from being reclaimed.
+    // This approach helps keep the system from accumulating more deferred work
+    // than it can ever retire (which is a problem with performing all
+    // maintenance asynchronously in the background).
     auto do_gc = make_scope_guard([&] {
+        bool contention_detected = do_txn_log_maintenance();
+        // We must release our reserved timestamp in order to advance the
+        // pre-truncate watermark as far as possible.
+        unprotect_txn_metadata();
+        // We need to avoid executing unprotect_txn_metadata() twice because it
+        // is not idempotent (we assert that it must be called directly after
+        // calling protect_txn_metadata()).
+        cleanup_txn_metadata_protection.dismiss();
+        contention_detected |= do_txn_metadata_maintenance();
         // If we detect contention, then back off for about 5us (empirically
         // determined to be the best interval).
-        bool contention_detected = perform_maintenance();
         if (contention_detected)
         {
             spin_wait(c_contention_backoff_us * c_pause_iterations_per_us);
@@ -393,34 +482,13 @@ void client_t::commit_transaction()
     // Before registering the log, sort by locator for fast conflict detection.
     sort_log(txn_log());
 
-    // Obtain a safe_ts for our begin_ts, to prevent recursive validation from
-    // allowing the pre-truncate watermark to advance past our begin_ts into the
-    // conflict window. This ensures that any thread (including recursive
-    // validators) can safely read any txn metadata within the conflict window
-    // of this txn, until the commit decision is returned to the client. NB:
-    // This MUST be done before acquiring a commit_ts!
-    //
-    // We do not handle safe_ts failure here because it should be impossible for
-    // the post-GC watermark to advance past an active begin_ts (our begin_ts is
-    // not marked SUBMITTED until we acquire a commit_ts). If
-    // safe_ts_t::reserve() fails here, that indicates a bug.
-    //
-    // BUGBUG: We have observed a safe_ts failure here! This is a critical
-    // correctness issue: it indicates either a bug in the implementation or in
-    // the algorithm itself. It is imperative to specify and model-check the
-    // safe memory reclamation algorithm for txn metadata!
-    safe_ts_t safe_begin_ts(txn_id());
-    bool safe_ts_succeeded = safe_begin_ts.reserve();
-    ASSERT_INVARIANT(safe_ts_succeeded, "safe_ts reservation cannot fail!");
-
     // Register the committing txn under a new commit timestamp.
-    gaia_txn_id_t commit_ts = submit_txn(
-        txn_id(), txn_log_offset());
+    gaia_txn_id_t commit_ts = submit_txn(txn_id(), txn_log_offset());
 
     // Validate the txn against all other committed txns in the conflict window.
     bool is_committed = validate_txn(commit_ts);
 
-    // Update the txn metadata with our commit decision.
+    // Update this txn's commit_ts entry with the commit decision.
     get_txn_metadata()->update_txn_decision(commit_ts, is_committed);
 
     // Throw an exception on an abort decision.
@@ -500,8 +568,7 @@ void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_
         // Validate any undecided submitted txns.
         if (get_txn_metadata()->is_commit_ts(ts) && get_txn_metadata()->is_txn_validating(ts))
         {
-            bool is_committing_session = false;
-            bool is_committed = validate_txn(ts, is_committing_session);
+            bool is_committed = validate_txn(ts);
 
             // Update the current txn's decided status.
             get_txn_metadata()->update_txn_decision(ts, is_committed);
@@ -515,14 +582,6 @@ bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_
     ASSERT_PRECONDITION(
         txn_ids_with_log_offsets.empty(),
         "Vector passed in to get_txn_log_offsets_in_range() should be empty!");
-
-    // Protect the range of txn metadata being scanned.
-    safe_ts_t safe_start_ts(start_ts);
-    if (!safe_start_ts.reserve())
-    {
-        // Failure just means that we cannot retrieve all logs from the range.
-        return false;
-    }
 
     // This is just for asserting an invariant.
     bool acquired_first_log_ref = false;
@@ -584,8 +643,8 @@ void client_t::get_txn_log_offsets_for_snapshot(gaia_txn_id_t begin_ts,
     // begin_ts, stopping either just before the saved watermark or at the first
     // commit_ts whose log offset has been invalidated. This avoids having our
     // scan race the concurrently advancing watermark.
-    safe_watermark_t post_apply_watermark(watermark_type_t::post_apply);
-    for (gaia_txn_id_t ts = begin_ts - 1; ts > static_cast<gaia_txn_id_t>(post_apply_watermark); --ts)
+    auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
+    for (gaia_txn_id_t ts = begin_ts - 1; ts > post_apply_watermark; --ts)
     {
         if (get_txn_metadata()->is_commit_ts(ts))
         {
@@ -675,7 +734,7 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
     return commit_ts;
 }
 
-bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
+bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 {
     gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
 
@@ -683,47 +742,6 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
     if (commit_ts == begin_ts + 1)
     {
         return true;
-    }
-
-    // We assume that the commit_ts is already protected by a safe_ts that was
-    // reserved earlier, but we need to protect the begin_ts with a new safe_ts,
-    // if this is not the session originally committing the txn
-    // (commit_transaction() protects its begin_ts before acquiring its
-    // commit_ts). There are currently 2 scenarios where a txn can be validated
-    // by a session that did not commit it:
-    //
-    // 1. In begin_transaction(), after a begin_ts is acquired, a safe_ts is
-    //    reserved for the pre-apply watermark, and all undecided txns between
-    //    the pre-apply watermark and the new begin_ts must be validated.
-    //
-    // 2. In commit_transaction(), when a safe_ts has been reserved for the
-    //    begin_ts of the committing txn and an undecided txn is found within
-    //    the conflict window.
-    //
-    // In case 1), the commit_ts is already protected by a safe_ts, but the
-    // begin_ts may not be, so it is unsafe to scan the conflict window before
-    // reserving a safe_ts for the begin_ts. In case 2), the begin_ts of the
-    // committing txn is protected by a safe_ts, but the begin_ts of an
-    // undecided txn within the conflict window may precede the begin_ts of the
-    // committing txn, so we must reserve a safe_ts to protect the begin_ts of
-    // that undecided txn before validating it. Note that while in both these
-    // cases, any undecided txn originally had its begin_ts protected by its
-    // committing session, that session may have completed validation and
-    // released its reserved safe_ts before a non-committing session completed
-    // its validation of the txn, so each validation of an undecided txn must
-    // separately reserve a safe_ts to protect the txn's begin_ts.
-    safe_ts_t safe_begin_ts(begin_ts);
-    if (!is_committing_session)
-    {
-        bool safe_ts_succeeded = safe_begin_ts.reserve();
-        if (!safe_ts_succeeded)
-        {
-            // If we failed to reserve the begin_ts, it must be because its
-            // commit_ts was already decided (the post-GC watermark cannot
-            // overtake the begin_ts otherwise).
-            ASSERT_INVARIANT(get_txn_metadata()->is_txn_decided(commit_ts),
-                "safe_ts reservation of a begin_ts can only fail if its commit_ts was decided!");
-        }
     }
 
     // Acquire a single reference to the committing txn's log for the duration
@@ -746,12 +764,11 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
     // and test all committed txns for conflicts with the committing txn.
     for (gaia_txn_id_t ts = begin_ts + 1; ts < commit_ts; ++ts)
     {
-        // Seal all uninitialized entries. This marks a "fence" after which any
-        // submitted txns with commit timestamps in our conflict window must
-        // already be registered under their commit_ts (they must retry with a
-        // new timestamp otherwise). (The sealing is necessary only on the first
-        // pass, but the "uninitialized txn metadata" check is cheap enough that
-        // repeating it on subsequent passes shouldn't matter.)
+        // Sealing all uninitialized entries within the conflict window marks a
+        // "fence" after which any submitted txns which have acquired commit
+        // timestamps in the conflict window must already have stored commit_ts
+        // entries at that timestamp (they must retry with a new timestamp
+        // otherwise).
         if (get_txn_metadata()->seal_uninitialized_ts(ts))
         {
             continue;
@@ -770,8 +787,7 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
                     c_message_preceding_txn_should_have_been_validated);
 
                 // Recursively validate the current undecided txn.
-                bool is_committing_session = false;
-                bool is_committed = validate_txn(ts, is_committing_session);
+                bool is_committed = validate_txn(ts);
 
                 // Update the current txn's decided status.
                 get_txn_metadata()->update_txn_decision(ts, is_committed);
@@ -822,11 +838,11 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
     return true;
 }
 
-// This method is called by an active txn when it is terminated or by a
-// submitted txn after it is validated. It performs a few system maintenance
-// tasks, which can be deferred indefinitely with no effect on availability or
-// correctness, but which are essential to maintain acceptable performance and
-// resource usage.
+// The following two methods are called by an active txn when it is terminated
+// or by a submitted txn after it is validated. They perform a few system
+// maintenance tasks, which can be deferred indefinitely with no effect on
+// availability or correctness, but which are essential to maintain acceptable
+// performance and resource usage.
 //
 // To enable reasoning about the safety of reclaiming resources which should no
 // longer be needed by any present or future txns, and other invariant-based
@@ -852,12 +868,7 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
 // logged if persistence is enabled), and sets a flag on each txn when GC is
 // complete. The third pass advances a watermark to the latest txn for which GC
 // has completed for it and all its predecessors (marking a lower bound on the
-// oldest txn whose metadata cannot yet be safely reclaimed), computes a safe
-// truncation boundary using this watermark (as well as any "safe timestamps"
-// reserved by threads scanning txn metadata that need to be protected from
-// concurrent truncation of the txn table), and finally truncates the txn table
-// at this boundary by decommitting all physical pages corresponding to virtual
-// address space below the boundary.
+// oldest txn whose metadata cannot yet be safely reclaimed).
 //
 // 1. We scan the interval from a snapshot of the pre-apply watermark to a
 //    snapshot of the last allocated timestamp, and attempt to advance the
@@ -894,18 +905,10 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session)
 //    snapshot of the post-apply watermark. If the current entry is a begin_ts
 //    or a commit_ts with TXN_GC_COMPLETE set, we try to advance the post-GC
 //    watermark. If that fails (or the watermark cannot be advanced because the
-//    commit_ts has TXN_GC_COMPLETE unset), we abort the pass. If we complete
-//    this pass, then we calculate a "safe truncation timestamp" and attempt to
-//    advance the pre-truncate watermark to that timestamp. If we successfully
-//    advanced the pre-truncate watermark, then we calculate the number of pages
-//    between the previous pre-truncate watermark value and its new value; if
-//    this count exceeds zero then we decommit all such pages using madvise(2).
-//    (It is possible for multiple GC tasks to concurrently or repeatedly
-//    decommit the same pages, but madvise(2) is idempotent and
-//    concurrency-safe.)
+//    commit_ts has TXN_GC_COMPLETE unset), we abort the pass.
 //
 // Returns true if contention was detected, false otherwise.
-bool client_t::perform_maintenance()
+bool client_t::do_txn_log_maintenance()
 {
     bool contention_detected = false;
 
@@ -923,10 +926,33 @@ bool client_t::perform_maintenance()
     // sequential, while GC is sequentially initiated but concurrently executed.
     contention_detected |= update_post_gc_watermark();
 
-    // Find a timestamp at which we can safely truncate the txn table, advance
-    // the pre-truncate watermark to that timestamp, and truncate the txn table
-    // at the highest page boundary less than the pre-truncate watermark.
-    contention_detected |= truncate_txn_table();
+    return contention_detected;
+}
+
+// Calculate a "safe truncation timestamp", below which all virtual memory
+// containing txn metadata can be safely reclaimed, and attempt to advance the
+// pre-truncate watermark to that timestamp. If we successfully advanced the
+// pre-truncate watermark, then we calculate the number of pages between the
+// previous pre-truncate watermark value and its new value; if this count
+// exceeds a threshold then we decommit all such pages using madvise(2). (It is
+// possible for multiple GC tasks to concurrently or repeatedly decommit the
+// same pages, but madvise(2) is idempotent and concurrency-safe.)
+//
+// Returns true if contention was detected, false otherwise.
+bool client_t::do_txn_metadata_maintenance()
+{
+    // Find a timestamp at which we can safely truncate the txn table and
+    // advance the pre-truncate watermark to that timestamp.
+    gaia_txn_id_t old_pre_truncate_watermark, new_pre_truncate_watermark;
+    bool contention_detected = update_pre_truncate_watermark(
+        old_pre_truncate_watermark, new_pre_truncate_watermark);
+
+    // If we advanced the pre-truncate watermark, truncate the txn table at the
+    // highest page boundary less than the pre-truncate watermark.
+    if (new_pre_truncate_watermark.is_valid())
+    {
+        truncate_txn_table(old_pre_truncate_watermark, new_pre_truncate_watermark);
+    }
 
     return contention_detected;
 }
@@ -941,7 +967,7 @@ bool client_t::apply_txn_logs_to_shared_view()
 
     // Now get a snapshot of the pre-apply watermark,
     // for a lower bound on the scan.
-    safe_watermark_t pre_apply_watermark(watermark_type_t::pre_apply);
+    auto pre_apply_watermark = get_safe_watermark(watermark_type_t::pre_apply);
 
     // Scan from the saved pre-apply watermark to the last known timestamp,
     // and apply all committed txn logs from the longest prefix of decided
@@ -949,7 +975,7 @@ bool client_t::apply_txn_logs_to_shared_view()
     // txn. Advance the pre-apply watermark before applying the txn log
     // of a committed txn, and advance the post-apply watermark after
     // applying the txn log.
-    for (gaia_txn_id_t ts = static_cast<gaia_txn_id_t>(pre_apply_watermark) + 1; ts <= last_allocated_ts; ++ts)
+    for (gaia_txn_id_t ts = pre_apply_watermark + 1; ts <= last_allocated_ts; ++ts)
     {
         // We need to seal uninitialized entries as we go along, so that we
         // don't miss any active begin_ts or committed commit_ts entries.
@@ -1016,8 +1042,8 @@ bool client_t::apply_txn_logs_to_shared_view()
         //
         // REVIEW: These loads could be relaxed, because a stale read could only
         // result in premature abort of the scan.
-        if (get_watermarks()->get_watermark(watermark_type_t::pre_apply) != prev_ts
-            || get_watermarks()->get_watermark(watermark_type_t::post_apply) != prev_ts)
+        if (get_safe_watermark(watermark_type_t::pre_apply) != prev_ts
+            || get_safe_watermark(watermark_type_t::post_apply) != prev_ts)
         {
             // Either the pre-apply watermark has been advanced since our
             // previous read, or the post-apply watermark has not caught up with
@@ -1031,7 +1057,7 @@ bool client_t::apply_txn_logs_to_shared_view()
             // If another thread has already advanced the watermark ahead of
             // this ts, we abort advancing it further.
             ASSERT_INVARIANT(
-                get_watermarks()->get_watermark(watermark_type_t::pre_apply) > static_cast<gaia_txn_id_t>(pre_apply_watermark),
+                get_safe_watermark(watermark_type_t::pre_apply) > pre_apply_watermark,
                 "The watermark must have advanced if advance_watermark() failed!");
 
             // Another thread concurrently advanced the watermark.
@@ -1079,20 +1105,17 @@ bool client_t::gc_applied_txn_logs()
     auto cleanup_fd = make_scope_guard([&] { map_gc_chunks_to_versions().clear(); });
 
     // Get a snapshot of the post-apply watermark, for an upper bound on the scan.
-    safe_watermark_t post_apply_watermark(watermark_type_t::post_apply);
+    auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
 
     // Get a snapshot of the post-GC watermark, for a lower bound on the scan.
-    safe_watermark_t post_gc_watermark(watermark_type_t::post_gc);
+    auto post_gc_watermark = get_safe_watermark(watermark_type_t::post_gc);
 
     // Scan from the post-GC watermark to the post-apply watermark, executing GC
     // on any commit_ts if the txn log is valid (and the durable flag is set if
     // persistence is enabled). (If we fail to invalidate the txn log, we abort
     // the scan to avoid contention.) When GC is complete, set the
     // TXN_GC_COMPLETE flag on the txn metadata and continue.
-    for (
-        gaia_txn_id_t ts = static_cast<gaia_txn_id_t>(post_gc_watermark) + 1;
-        ts <= static_cast<gaia_txn_id_t>(post_apply_watermark);
-        ++ts)
+    for (gaia_txn_id_t ts = post_gc_watermark + 1; ts <= post_apply_watermark; ++ts)
     {
         ASSERT_INVARIANT(
             !get_txn_metadata()->is_uninitialized_ts(ts),
@@ -1223,10 +1246,10 @@ bool client_t::update_post_gc_watermark()
     bool contention_detected = false;
 
     // Get a snapshot of the post-apply watermark, for an upper bound on the scan.
-    safe_watermark_t post_apply_watermark(watermark_type_t::post_apply);
+    auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
 
     // Get a snapshot of the post-GC watermark, for a lower bound on the scan.
-    safe_watermark_t post_gc_watermark(watermark_type_t::post_gc);
+    auto post_gc_watermark = get_safe_watermark(watermark_type_t::post_gc);
 
     // Scan from the post-GC watermark to the post-apply watermark, advancing
     // the post-GC watermark to any commit_ts marked TXN_GC_COMPLETE, or any
@@ -1236,10 +1259,7 @@ bool client_t::update_post_gc_watermark()
     // entries to safely dereference a commit_ts entry from its begin_ts entry.)
     // If the post-GC watermark cannot be advanced to the current timestamp,
     // abort the scan.
-    for (
-        gaia_txn_id_t ts = static_cast<gaia_txn_id_t>(post_gc_watermark) + 1;
-        ts <= static_cast<gaia_txn_id_t>(post_apply_watermark);
-        ++ts)
+    for (gaia_txn_id_t ts = post_gc_watermark + 1; ts <= post_apply_watermark; ++ts)
     {
         ASSERT_INVARIANT(
             !get_txn_metadata()->is_uninitialized_ts(ts),
@@ -1279,7 +1299,7 @@ bool client_t::update_post_gc_watermark()
             // If another thread has already advanced the post-GC watermark
             // ahead of this ts, we abort advancing it further.
             ASSERT_INVARIANT(
-                get_watermarks()->get_watermark(watermark_type_t::post_gc) > static_cast<gaia_txn_id_t>(post_gc_watermark),
+                get_safe_watermark(watermark_type_t::post_gc) > post_gc_watermark,
                 "The watermark must have advanced if advance_watermark() failed!");
 
             // Another thread concurrently advanced the watermark.
@@ -1291,10 +1311,24 @@ bool client_t::update_post_gc_watermark()
     return contention_detected;
 }
 
-bool client_t::truncate_txn_table()
+bool client_t::update_pre_truncate_watermark(
+    gaia_txn_id_t& old_pre_truncate_watermark, gaia_txn_id_t& new_pre_truncate_watermark)
 {
+    ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be valid!");
+    ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
+    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
+
+    // The calling thread should have already released its reserved safe_ts, to
+    // ensure the pre-truncate watermark can advance as far as possible.
+    auto reserved_ts = get_safe_ts_entries()->get_reserved_ts(safe_ts_entries_index());
+    ASSERT_PRECONDITION(!reserved_ts.is_valid(), "Expected any reserved safe_ts to be released!");
+
+    // new_pre_truncate_watermark is only valid if we advance the pre-truncate watermark.
+    new_pre_truncate_watermark = c_invalid_gaia_txn_id;
+
     // Get a snapshot of the pre-truncate watermark before advancing it.
-    gaia_txn_id_t prev_pre_truncate_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_truncate);
+    old_pre_truncate_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_truncate);
 
     // Abort if the largest possible range of metadata that can be freed (from
     // the last truncation boundary to the current post-GC watermark) does not
@@ -1302,7 +1336,7 @@ bool client_t::truncate_txn_table()
     // We add 1 because in general the truncation boundaries will not fall on a
     // page boundary.
     size_t pages_to_decommit_upper_bound = 1 + get_txn_metadata_page_count_from_ts_range(
-        prev_pre_truncate_watermark, get_watermarks()->get_watermark(watermark_type_t::post_gc));
+        old_pre_truncate_watermark, get_watermarks()->get_watermark(watermark_type_t::post_gc));
 
     if (pages_to_decommit_upper_bound < transactions::c_min_pages_to_free)
     {
@@ -1310,7 +1344,7 @@ bool client_t::truncate_txn_table()
     }
 
     // Compute a safe truncation timestamp.
-    gaia_txn_id_t new_pre_truncate_watermark = safe_ts_t::get_safe_truncation_ts();
+    new_pre_truncate_watermark = get_safe_ts_entries()->get_safe_truncation_ts(get_watermarks());
 
     // Abort if the safe truncation timestamp does not exceed the current
     // pre-truncate watermark.
@@ -1318,40 +1352,47 @@ bool client_t::truncate_txn_table()
     // the pre-truncate watermark, because some published (but not yet
     // validated) timestamps may have been behind the pre-truncate watermark
     // when they were published (and will later fail validation).
-    if (new_pre_truncate_watermark <= prev_pre_truncate_watermark)
+    if (new_pre_truncate_watermark <= old_pre_truncate_watermark)
     {
+        new_pre_truncate_watermark = c_invalid_gaia_txn_id;
         return false;
     }
 
     // Try to advance the pre-truncate watermark.
     if (!get_watermarks()->advance_watermark(watermark_type_t::pre_truncate, new_pre_truncate_watermark))
     {
+        new_pre_truncate_watermark = c_invalid_gaia_txn_id;
+
         // Abort if another thread has concurrently advanced the
         // pre-truncate watermark, to avoid contention.
         ASSERT_INVARIANT(
-            get_watermarks()->get_watermark(watermark_type_t::pre_truncate) > prev_pre_truncate_watermark,
+            get_watermarks()->get_watermark(watermark_type_t::pre_truncate) > old_pre_truncate_watermark,
             "The watermark must have advanced if advance_watermark() failed!");
 
-        // Another thread concurrently advanced the watermark.
+        // Contention was detected.
         return true;
     }
 
-    // We advanced the pre-truncate watermark, so actually truncate the txn
-    // table by decommitting its unused physical pages. Because this
-    // operation is concurrency-safe and idempotent, it can be done without
-    // mutual exclusion.
-    // REVIEW: The previous logic could also be used to safely advance the
-    // "head" pointer if the txn table were implemented as a circular
-    // buffer.
+    return false;
+}
 
-    // Calculate the number of pages between the previously read pre-truncate
-    // watermark and our safe truncation timestamp. If the result exceeds zero,
-    // then decommit all such pages.
+bool client_t::truncate_txn_table(
+    gaia_txn_id_t old_pre_truncate_watermark, gaia_txn_id_t new_pre_truncate_watermark)
+{
+    // Truncate the txn table by decommitting its unused physical pages. Because
+    // this operation is concurrency-safe and idempotent, it can be done without
+    // mutual exclusion.
+    // REVIEW: This method could also be used to safely advance the "head"
+    // pointer if the txn table were implemented as a circular buffer.
+
+    // Calculate the number of pages between the old and new pre-truncate
+    // watermark values. If the result exceeds a threshold, then decommit all
+    // such pages.
     size_t pages_to_decommit_count = get_txn_metadata_page_count_from_ts_range(
-        prev_pre_truncate_watermark, new_pre_truncate_watermark);
-    if (pages_to_decommit_count > 0)
+        old_pre_truncate_watermark, new_pre_truncate_watermark);
+    if (pages_to_decommit_count > transactions::c_min_pages_to_free)
     {
-        char* prev_page_start_address = get_txn_metadata_page_address_from_ts(prev_pre_truncate_watermark);
+        char* prev_page_start_address = get_txn_metadata_page_address_from_ts(old_pre_truncate_watermark);
 
         // MADV_FREE seems like the best fit for our needs, since it allows the OS
         // to lazily reclaim decommitted pages. However, it returns EINVAL when used
@@ -1362,6 +1403,8 @@ bool client_t::truncate_txn_table()
         {
             throw_system_error("madvise(MADV_REMOVE) failed!");
         }
+
+        return true;
     }
 
     return false;
@@ -1534,6 +1577,7 @@ bool client_t::txn_logs_conflict(log_offset_t offset1, log_offset_t offset2)
             ++log2_idx;
         }
     }
+
     return false;
 }
 
@@ -1572,4 +1616,75 @@ void client_t::log_txn_operation(
     lr.locator = locator;
     lr.old_offset = old_offset;
     lr.new_offset = new_offset;
+}
+
+// We prevent txn metadata from having its memory reclaimed during a scan by
+// observing the post-GC watermark and reserving the timestamp that we observed.
+// Since the post-GC watermark lags all other watermarks used for scans (i.e.,
+// all but the pre-truncate watermark), we can safely scan any txn metadata
+// range beginning at or after any watermark. The pre-truncate watermark cannot
+// be advanced past the timestamp that we reserved (and thus no txn metadata
+// after that timestamp can be reclaimed) until we call
+// unprotect_txn_metadata().
+void client_t::protect_txn_metadata()
+{
+    ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be valid!");
+    ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
+    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
+
+    // Loop until we successfully reserve the timestamp of the post-GC watermark
+    // that we observed. Technically, there is no bound on the number of
+    // iterations until success, so this is not wait-free, but in practice
+    // failures should be very rare.
+    while (true)
+    {
+        // Get a snapshot of the post-GC watermark.
+        auto post_gc_watermark = get_watermarks()->get_watermark(watermark_type_t::post_gc);
+
+        // Try to reserve the post-GC watermark's timestamp.
+        if (get_safe_ts_entries()->reserve_safe_ts(
+            safe_ts_entries_index(), post_gc_watermark, get_watermarks()))
+        {
+            // We successfully reserved the timestamp that we observed.
+            break;
+        }
+    }
+}
+
+// Release the timestamp reserved in protect_txn_metadata(), allowing the
+// pre-truncate watermark to advance past that timestamp. No txn metadata can be
+// safely scanned after this is called and before protect_txn_metadata() is
+// called again.
+void client_t::unprotect_txn_metadata()
+{
+    ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be valid!");
+    ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
+    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
+
+    get_safe_ts_entries()->release_safe_ts(safe_ts_entries_index(), get_watermarks());
+}
+
+gaia_txn_id_t client_t::get_safe_watermark(watermark_type_t watermark_type)
+{
+    // We should use this interface only for scanning a range of txn metadata,
+    // which should never require reading the pre-truncate watermark.
+    ASSERT_PRECONDITION(watermark_type != watermark_type_t::pre_truncate,
+        "Cannot use get_safe_watermark() to retrieve pre-truncate watermark!");
+    ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
+        "safe_ts entries index should be valid!");
+    ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
+    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
+
+    auto reserved_ts = get_safe_ts_entries()->get_reserved_ts(safe_ts_entries_index());
+    ASSERT_PRECONDITION(reserved_ts.is_valid(), "Expected valid safe_ts to be reserved!");
+
+    auto watermark_ts = get_watermarks()->get_watermark(watermark_type);
+    if (watermark_ts.is_valid())
+    {
+        ASSERT_INVARIANT(reserved_ts <= watermark_ts, "Expected reserved safe_ts to precede watermark!");
+    }
+
+    return watermark_ts;
 }

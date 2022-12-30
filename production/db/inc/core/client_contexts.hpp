@@ -90,6 +90,9 @@ struct client_session_context_t
     // commit_ts.
     gaia_txn_id_t latest_applied_commit_ts{c_invalid_gaia_txn_id};
 
+    // This thread's reserved index into the shared_safe_ts_entries publication array.
+    size_t safe_ts_entries_index{safe_ts_entries_t::c_invalid_safe_ts_index};
+
     void clear();
 
     client_session_context_t();

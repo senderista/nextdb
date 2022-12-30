@@ -138,5 +138,10 @@ memory_allocation_error_internal::memory_allocation_error_internal()
     m_message = "The Gaia database ran out of memory.";
 }
 
+safe_ts_failure_internal::safe_ts_failure_internal()
+{
+    m_message = "Failed to protect transaction metadata for the current thread.";
+}
+
 } // namespace db
 } // namespace gaia

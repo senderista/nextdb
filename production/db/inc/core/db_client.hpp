@@ -63,6 +63,7 @@ public:
     // These functions are exported from and documented in gaia/db/db.hpp.
     static inline bool is_session_open();
     static inline bool is_transaction_open();
+    static void begin_session();
     static void end_session();
     static void begin_transaction();
     static void rollback_transaction();
@@ -73,9 +74,6 @@ public:
         gaia_locator_t locator,
         gaia_offset_t old_offset,
         gaia_offset_t new_offset);
-
-    // Internal version of begin_session(), called by public interface in db.hpp.
-    static void begin_session();
 
 private:
     // Called by internal code to verify preconditions.
@@ -99,6 +97,7 @@ private:
     static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
     static inline std::vector<std::pair<chunk_offset_t, chunk_version_t>>& map_gc_chunks_to_versions();
     static inline gaia_txn_id_t latest_applied_commit_ts();
+    static inline size_t safe_ts_entries_index();
 
 private:
     // We don't use unique_ptr because its destructor is "non-trivial"
@@ -107,8 +106,6 @@ private:
 
 private:
     static void init_memory_manager();
-
-    static void txn_cleanup();
 
     static void commit_chunk_manager_allocations();
     static void rollback_chunk_manager_allocations();
@@ -130,14 +127,26 @@ private:
     static bool is_log_sorted(txn_log_t* txn_log);
     static void sort_log(txn_log_t* txn_log);
     static gaia_txn_id_t submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offset);
-    static bool validate_txn(gaia_txn_id_t commit_ts, bool is_committing_session = true);
+    static bool validate_txn(gaia_txn_id_t commit_ts);
     static bool txn_logs_conflict(log_offset_t offset1, log_offset_t offset2);
 
-    static bool perform_maintenance();
+    // Returns true if contention was detected, false otherwise.
+    static bool do_txn_log_maintenance();
+    // Returns true if contention was detected, false otherwise.
+    static bool do_txn_metadata_maintenance();
+    // Returns true if contention was detected, false otherwise.
     static bool apply_txn_logs_to_shared_view();
+    // Returns true if contention was detected, false otherwise.
     static bool gc_applied_txn_logs();
+    // Returns true if contention was detected, false otherwise.
     static bool update_post_gc_watermark();
-    static bool truncate_txn_table();
+    // Returns true if contention was detected, false otherwise.
+    static bool update_pre_truncate_watermark(
+        gaia_txn_id_t& old_pre_truncate_watermark, gaia_txn_id_t& new_pre_truncate_watermark);
+
+    // Truncates the txn table at the highest page boundary less than the pre-truncate watermark.
+    // Returns true if any pages were decommitted, false otherwise.
+    static bool truncate_txn_table(gaia_txn_id_t old_pre_truncate_watermark, gaia_txn_id_t new_pre_truncate_watermark);
     static char* get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts);
     static size_t get_txn_metadata_page_count_from_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
 
@@ -148,6 +157,13 @@ private:
 
     static bool acquire_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
     static void release_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
+
+    // Prevents txn metadata from having its memory reclaimed during a scan.
+    static void protect_txn_metadata();
+    static void unprotect_txn_metadata();
+
+    // Asserts that the watermark is protected by a reserved safe_ts.
+    static gaia_txn_id_t get_safe_watermark(watermark_type_t watermark_type);
 };
 
 #include "db_client.inc"

@@ -332,9 +332,11 @@ void chunk_manager_t::decommit_data_pages()
     }
 #endif
 
-    // MADV_FREE seems like the best fit for our needs, since it allows the OS to lazily reclaim decommitted pages.
-    // However, it returns EINVAL when used with MAP_SHARED, so we need to use MADV_REMOVE (which works with memfd objects).
-    // According to the manpage, madvise(MADV_REMOVE) is equivalent to fallocate(FALLOC_FL_PUNCH_HOLE).
+    // MADV_FREE seems like the best fit for our needs, since it allows the OS
+    // to lazily reclaim decommitted pages. However, it returns EINVAL when used
+    // with MAP_SHARED, so we need to use MADV_REMOVE (which works with memfd
+    // objects). According to the manpage, madvise(MADV_REMOVE) is equivalent to
+    // fallocate(FALLOC_FL_PUNCH_HOLE).
     if (-1 == ::madvise(first_data_page_address, c_chunk_data_pages_size_in_bytes, MADV_REMOVE))
     {
         throw_system_error("madvise(MADV_REMOVE) failed!");

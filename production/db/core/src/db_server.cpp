@@ -107,7 +107,54 @@ void server_t::init_shared_memory()
     // initialization where it's necessary.
     get_logs()->initialize();
 
+    // TODO: Recovery (from a user-specified checkpoint) should execute here.
+
+    // Create a dummy txn representing the initial state of the DB (either empty or recovered).
+    init_txn_history();
+
     cleanup_memory.dismiss();
+}
+
+void server_t::init_txn_history()
+{
+    // Acquire a begin_ts and create a txn metadata entry for it.
+    gaia_txn_id_t initial_begin_ts = get_txn_metadata()->register_begin_ts();
+    // Acquire a commit_ts for this begin_ts and create a txn metadata entry for it.
+    gaia_txn_id_t initial_commit_ts = get_txn_metadata()->register_commit_ts(initial_begin_ts, c_invalid_log_offset);
+    // Set begin_ts entry status to submitted.
+    get_txn_metadata()->set_active_txn_submitted(initial_begin_ts, initial_commit_ts);
+    // Set commit_ts entry status to committed.
+    get_txn_metadata()->update_txn_decision(initial_commit_ts, true);
+    // We can unconditionally mark the initial txn durable since it is either
+    // empty or recovered from durable data.
+    get_txn_metadata()->set_txn_durable(initial_commit_ts);
+    // There was no log associated with the initial txn, so assume GC is complete.
+    get_txn_metadata()->set_txn_gc_complete(initial_commit_ts);
+    // Finally, advance all watermarks (except the pre-truncate watermark) to
+    // the initial commit_ts.
+    get_watermarks()->advance_watermark(watermark_type_t::pre_apply, initial_commit_ts);
+    get_watermarks()->advance_watermark(watermark_type_t::post_apply, initial_commit_ts);
+    get_watermarks()->advance_watermark(watermark_type_t::post_gc, initial_commit_ts);
+
+    // Assert desired state.
+    ASSERT_POSTCONDITION(get_txn_metadata()->is_txn_submitted(initial_begin_ts),
+        "Initial txn's begin_ts should be in SUBMITTED state!");
+    ASSERT_POSTCONDITION(get_txn_metadata()->get_commit_ts_from_begin_ts(initial_begin_ts) == initial_commit_ts,
+        "Initial txn's begin_ts is not linked to its commit_ts!");
+    ASSERT_POSTCONDITION(get_txn_metadata()->get_begin_ts_from_commit_ts(initial_commit_ts) == initial_begin_ts,
+        "Initial txn's commit_ts is not linked to its begin_ts!");
+    ASSERT_POSTCONDITION(get_txn_metadata()->is_txn_committed(initial_commit_ts),
+        "Initial txn's commit_ts should be in COMMITTED state!");
+    ASSERT_POSTCONDITION(get_txn_metadata()->is_txn_durable(initial_commit_ts),
+        "Initial txn's commit_ts should be durable!");
+    ASSERT_POSTCONDITION(get_txn_metadata()->is_txn_gc_complete(initial_commit_ts),
+        "Initial txn's commit_ts should be GC-complete!");
+    ASSERT_POSTCONDITION(get_watermarks()->get_watermark(watermark_type_t::pre_apply) == initial_commit_ts,
+        "Pre-apply watermark should be equal to initial txn's commit_ts!");
+    ASSERT_POSTCONDITION(get_watermarks()->get_watermark(watermark_type_t::post_apply) == initial_commit_ts,
+        "Post-apply watermark should be equal to initial txn's commit_ts!");
+    ASSERT_POSTCONDITION(get_watermarks()->get_watermark(watermark_type_t::post_gc) == initial_commit_ts,
+        "Post-GC watermark should be equal to initial txn's commit_ts!");
 }
 
 sigset_t server_t::get_masked_signals()

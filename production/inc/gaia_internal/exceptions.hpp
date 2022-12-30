@@ -131,6 +131,12 @@ public:
     explicit memory_allocation_error_internal();
 };
 
+class safe_ts_failure_internal : public safe_ts_failure
+{
+public:
+    explicit safe_ts_failure_internal();
+};
+
 } // namespace db
 
 } // namespace gaia

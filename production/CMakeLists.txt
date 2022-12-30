@@ -25,10 +25,6 @@ option(ENABLE_PROFILING_SUPPORT "Instrument binaries for profiling" OFF)
 
 option(DISABLE_ASSERTS "Disable assertions" OFF)
 
-# This safety feature reduces throughput by ~40% for a single thread, so we need
-# to be able to disable it easily to measure baseline performance.
-option(DISABLE_SAFE_TIMESTAMPS "Disable safe timestamps" OFF)
-
 # Enable this option to stress-test safe timestamp correctness.
 option(TXN_METADATA_GC_IMMEDIATE "Immediately GC txn metadata" OFF)
 
@@ -118,8 +114,6 @@ target_compile_definitions(gaia_build_options INTERFACE $<$<CONFIG:Debug>:DEBUG>
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>:DISABLE_ASSERTS>)
 # Disabling asserts will produce bogus unused variable warnings.
 target_compile_options(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>:-Wno-unused-parameter -Wno-unused-lambda-capture -Wno-unused-variable -Wno-unused-but-set-variable>)
-# Propagate the DISABLE_SAFE_TIMESTAMPS option to a macro definition.
-target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_SAFE_TIMESTAMPS}>:DISABLE_SAFE_TIMESTAMPS>)
 # Propagate the TXN_METADATA_GC_IMMEDIATE option to a macro definition.
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${TXN_METADATA_GC_IMMEDIATE}>:TXN_METADATA_GC_IMMEDIATE>)
 # Propagate the DISABLE_CHUNK_DECOMMIT option to a macro definition.

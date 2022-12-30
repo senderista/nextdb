@@ -192,6 +192,13 @@ class memory_allocation_error : public common::gaia_exception
 {
 };
 
+/**
+ * @brief Failed to protect transaction metadata for the current thread.
+ */
+class safe_ts_failure : public common::gaia_exception
+{
+};
+
 /**@}*/
 } // namespace db
 

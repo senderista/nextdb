@@ -149,19 +149,22 @@ inline gaia_txn_id_t get_last_txn_id()
     return static_cast<gaia_txn_id_t>(counters->last_txn_id);
 }
 
-inline void apply_log_to_locators(locators_t* locators, txn_log_t* txn_log, size_t starting_log_record_index = 0)
+inline void apply_log_to_locators(locators_t* locators, txn_log_t* txn_log,
+    bool apply_new_versions = true, size_t starting_log_record_index = 0)
 {
     for (size_t i = starting_log_record_index; i < txn_log->record_count; ++i)
     {
         auto log_record = &(txn_log->log_records[i]);
-        (*locators)[log_record->locator] = log_record->new_offset;
+        auto offset_to_apply = apply_new_versions ? log_record->new_offset : log_record->old_offset;
+        (*locators)[log_record->locator] = offset_to_apply;
     }
 }
 
-inline void apply_log_from_offset(locators_t* locators, log_offset_t log_offset, size_t starting_log_record_index = 0)
+inline void apply_log_from_offset(locators_t* locators, log_offset_t log_offset,
+    bool apply_new_versions = true, size_t starting_log_record_index = 0)
 {
     txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
-    apply_log_to_locators(locators, txn_log, starting_log_record_index);
+    apply_log_to_locators(locators, txn_log, apply_new_versions, starting_log_record_index);
 }
 
 // This method exists purely to isolate the chunk allocation slow path from

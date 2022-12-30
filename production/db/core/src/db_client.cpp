@@ -291,10 +291,14 @@ void client_t::begin_transaction()
     ASSERT_INVARIANT(txn_id().is_valid(), "Begin timestamp is invalid!");
 
     // We use this flag to apply various single-thread optimizations.
-    bool is_snapshot_window_empty = (txn_id() == latest_applied_commit_ts() + 1);
+    bool is_snapshot_window_empty = false;
+    if (latest_applied_commit_ts().is_valid())
+    {
+        is_snapshot_window_empty = (txn_id() == latest_applied_commit_ts() + 1);
+    }
 
     // Ensure that there are no undecided txns in our snapshot window.
-    if (is_snapshot_window_empty)
+    if (!is_snapshot_window_empty)
     {
         auto pre_apply_watermark = get_safe_watermark(watermark_type_t::pre_apply);
         validate_txns_in_range(pre_apply_watermark + 1, txn_id());
@@ -367,10 +371,8 @@ void client_t::rollback_transaction()
     });
 
     // Apply our undo log to roll back any changes to our private snapshot.
-    auto cleanup_snapshot = make_scope_guard([&] {
-        private_locators().close();
-        s_session_context->latest_applied_commit_ts = c_invalid_gaia_txn_id;
-    });
+    bool apply_new_versions = false;
+    apply_log_to_locators(private_locators().data(), txn_log(), apply_new_versions);
 
     // Free any deallocated objects.
 

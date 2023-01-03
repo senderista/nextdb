@@ -66,10 +66,7 @@ public:
     }
 
     // Returns the current value of the given watermark.
-    inline gaia_txn_id_t get_watermark(watermark_type_t watermark_type)
-    {
-        return m_watermarks[common::get_enum_value(watermark_type)].load();
-    }
+    inline gaia_txn_id_t get_watermark(watermark_type_t watermark_type, bool relaxed_load = false);
 
     // Atomically advances the given watermark to the given timestamp, if the
     // given timestamp is larger than the watermark's current value. It thus

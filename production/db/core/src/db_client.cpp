@@ -778,6 +778,14 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 
     // Acquire a single reference to the committing txn's log for the duration
     // of validation to minimize contention.
+    // This also prevents the pre-truncate watermark from advancing into the
+    // conflict window, because the post-GC watermark cannot advance past a
+    // submitted begin_ts with a commit_ts that is not marked TXN_GC_COMPLETE,
+    // GC cannot occur while the reference is held, and the pre-truncate
+    // watermark always lags the post-GC watermark.
+    // If we fail to acquire the reference, the conflict window is unprotected,
+    // but we don't need to scan the conflict window because the txn must have
+    // already been validated.
     if (!acquire_txn_log_reference_from_commit_ts(commit_ts))
     {
         // If the committing txn has already had its log invalidated,
@@ -1284,11 +1292,13 @@ bool client_t::update_post_gc_watermark()
     auto post_gc_watermark = get_safe_watermark(watermark_type_t::post_gc);
 
     // Scan from the post-GC watermark to the post-apply watermark, advancing
-    // the post-GC watermark to any commit_ts marked TXN_GC_COMPLETE, or any
+    // the post-GC watermark to any commit_ts marked TXN_GC_COMPLETE, or to any
     // begin_ts unless it is marked TXN_SUBMITTED and its commit_ts is not
-    // marked TXN_GC_COMPLETE. (We need to preserve begin_ts entries for
-    // commit_ts entries that have not completed GC, in order to allow index
-    // entries to safely dereference a commit_ts entry from its begin_ts entry.)
+    // marked TXN_GC_COMPLETE. (The latter condition prevents the pre-truncate
+    // watermark from advancing into the conflict window of any commit_ts entry
+    // that has not completed GC, in order to allow validating threads to safely
+    // scan the conflict window while they hold a reference to the txn log
+    // referenced by the commit_ts entry.)
     // If the post-GC watermark cannot be advanced to the current timestamp,
     // abort the scan.
     for (gaia_txn_id_t ts = post_gc_watermark + 1; ts <= post_apply_watermark; ++ts)

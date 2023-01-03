@@ -112,9 +112,9 @@ std::vector<std::pair<chunk_offset_t, chunk_version_t>>& client_t::map_gc_chunks
     return s_session_context->map_gc_chunks_to_versions;
 }
 
-gaia_txn_id_t client_t::latest_applied_commit_ts()
+gaia_txn_id_t client_t::latest_applied_commit_ts_lower_bound()
 {
-    return s_session_context->latest_applied_commit_ts;
+    return s_session_context->latest_applied_commit_ts_lower_bound;
 }
 
 size_t client_t::safe_ts_entries_index()

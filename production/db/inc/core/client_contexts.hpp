@@ -85,10 +85,10 @@ struct client_session_context_t
     // This is used by GC tasks on a session thread to cache chunk IDs for empty chunk deallocation.
     std::vector<std::pair<chunk_offset_t, chunk_version_t>> map_gc_chunks_to_versions{};
 
-    // We need to track the last commit_ts whose log was applied to our private
-    // snapshot, so we can ignore any logs committed at or before that
-    // commit_ts.
-    gaia_txn_id_t latest_applied_commit_ts{c_invalid_gaia_txn_id};
+    // We need to track a lower bound for the last commit_ts whose log was
+    // applied to our private snapshot, so we can ignore any logs committed at
+    // or before that commit_ts.
+    gaia_txn_id_t latest_applied_commit_ts_lower_bound{c_invalid_gaia_txn_id};
 
     // This thread's reserved index into the shared_safe_ts_entries publication array.
     size_t safe_ts_entries_index{safe_ts_entries_t::c_invalid_safe_ts_index};

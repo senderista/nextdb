@@ -292,9 +292,9 @@ void client_t::begin_transaction()
 
     // We use this flag to apply various single-thread optimizations.
     bool is_snapshot_window_empty = false;
-    if (latest_applied_commit_ts().is_valid())
+    if (latest_applied_commit_ts_lower_bound().is_valid())
     {
-        is_snapshot_window_empty = (txn_id() == latest_applied_commit_ts() + 1);
+        is_snapshot_window_empty = (txn_id() == latest_applied_commit_ts_lower_bound() + 1);
     }
 
     // Ensure that there are no undecided txns in our snapshot window.
@@ -313,13 +313,13 @@ void client_t::begin_transaction()
 
     // If our snapshot is already mapped, and either the snapshot window is
     // empty or we can pin all committed txn logs between
-    // latest_applied_commit_ts and our begin_ts, then we can reuse our
-    // snapshot. Otherwise, we must remap our snapshot.
+    // latest_applied_commit_ts_lower_bound and our begin_ts, then we can reuse
+    // our snapshot. Otherwise, we must remap our snapshot.
     bool can_reuse_snapshot = (
         private_locators().is_set() &&
-        latest_applied_commit_ts().is_valid() &&
+        latest_applied_commit_ts_lower_bound().is_valid() &&
         (is_snapshot_window_empty || get_txn_log_offsets_in_range(
-            latest_applied_commit_ts() + 1, txn_id(), txn_logs_for_snapshot())));
+            latest_applied_commit_ts_lower_bound() + 1, txn_id(), txn_logs_for_snapshot())));
 
     ASSERT_POSTCONDITION(can_reuse_snapshot || txn_logs_for_snapshot().empty(),
         "get_txn_log_offsets_in_range() cannot fail and return a non-empty set of log offsets!");
@@ -330,7 +330,14 @@ void client_t::begin_transaction()
         private_locators().close();
         bool manage_fd = false;
         bool is_shared = false;
+        // A snapshot of the post-apply watermark taken before mapping the
+        // global snapshot is a lower bound on the latest commit_ts applied to
+        // the global snapshot before it was mapped.
+        auto latest_applied_commit_ts_lower_bound = get_watermarks()->get_watermark(watermark_type_t::post_apply);
+        ASSERT_INVARIANT(txn_id() > latest_applied_commit_ts_lower_bound,
+            "The post-apply watermark cannot advance to an active begin_ts!");
         private_locators().open(s_session_context->fd_locators, manage_fd, is_shared);
+        s_session_context->latest_applied_commit_ts_lower_bound = latest_applied_commit_ts_lower_bound;
 
         // Get all txn logs that might need to be applied to the new snapshot.
         if (!is_snapshot_window_empty)
@@ -347,6 +354,20 @@ void client_t::begin_transaction()
         {
             apply_log_from_offset(private_locators().data(), log_offset);
             get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
+        }
+
+        // Remember the latest log we applied so we can reuse this snapshot.
+        if (!txn_logs_for_snapshot().empty())
+        {
+            auto latest_applied_log_txn_id = txn_logs_for_snapshot().back().first;
+            ASSERT_INVARIANT(get_txn_metadata()->is_txn_submitted(latest_applied_log_txn_id),
+                "A begin_ts entry corresponding to a committed commit_ts entry must have been submitted!");
+            auto latest_applied_log_commit_ts = get_txn_metadata()->get_commit_ts_from_begin_ts(latest_applied_log_txn_id);
+            ASSERT_INVARIANT(latest_applied_log_commit_ts.is_valid(),
+                "A begin_ts entry corresponding to a committed commit_ts entry must have a valid linked commit_ts!");
+            ASSERT_INVARIANT(get_txn_metadata()->is_txn_committed(latest_applied_log_commit_ts),
+                "A commit_ts entry corresponding to an applied txn log must have been committed!");
+            s_session_context->latest_applied_commit_ts_lower_bound = latest_applied_log_commit_ts;
         }
     }
 
@@ -426,9 +447,9 @@ void client_t::commit_transaction()
         // mapping.
         private_locators().close();
 
-        // We must clear latest_applied_commit_ts if there are any "holes" in
-        // the sequence of applied logs.
-        s_session_context->latest_applied_commit_ts = c_invalid_gaia_txn_id;
+        // We must clear latest_applied_commit_ts_lower_bound if there are any
+        // "holes" in the sequence of applied logs.
+        s_session_context->latest_applied_commit_ts_lower_bound = c_invalid_gaia_txn_id;
     });
 
     // Protect all txn metadata accessed by this function. Reserving a timestamp
@@ -574,7 +595,8 @@ void client_t::commit_transaction()
     if (can_apply_logs)
     {
         // Remember the latest log we applied so we can reuse this snapshot.
-        s_session_context->latest_applied_commit_ts = commit_ts;
+        // (The latest log applied is always our own.)
+        s_session_context->latest_applied_commit_ts_lower_bound = commit_ts;
 
         // We can possibly reuse this snapshot, so keep it mapped.
         cleanup_snapshot.dismiss();

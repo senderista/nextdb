@@ -96,7 +96,7 @@ private:
     static inline std::vector<data_mapping_t>& data_mappings();
     static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
     static inline std::vector<std::pair<chunk_offset_t, chunk_version_t>>& map_gc_chunks_to_versions();
-    static inline gaia_txn_id_t latest_applied_commit_ts();
+    static inline gaia_txn_id_t latest_applied_commit_ts_lower_bound();
     static inline size_t safe_ts_entries_index();
 
 private:

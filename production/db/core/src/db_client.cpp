@@ -509,6 +509,11 @@ void client_t::commit_transaction()
     {
         is_committed = validate_txn(commit_ts);
     }
+    else
+    {
+        // This is normally done within validate_txn().
+        get_txn_metadata()->set_submitted_txn_commit_ts(txn_id(), commit_ts);
+    }
 
     // Update this txn's commit_ts entry with the commit decision.
     get_txn_metadata()->update_txn_decision(commit_ts, is_committed);
@@ -757,11 +762,11 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
 
     ASSERT_PRECONDITION(get_logs()->is_log_offset_allocated(log_offset), "Invalid log offset!");
 
+    // Transition the begin_ts entry from ACTIVE to SUBMITTED state.
+    get_txn_metadata()->set_active_txn_submitted(begin_ts);
+
     // Allocate a new commit_ts and initialize its metadata with our begin_ts and log offset.
     gaia_txn_id_t commit_ts = get_txn_metadata()->register_commit_ts(begin_ts, log_offset);
-
-    // Now update the active txn metadata.
-    get_txn_metadata()->set_active_txn_submitted(begin_ts, commit_ts);
 
     return commit_ts;
 }
@@ -769,6 +774,13 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
 bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 {
     gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
+
+    // We defer setting the commit_ts in the begin_ts entry until validation, so
+    // that validating threads don't have to wait for the committing session
+    // thread to set it, and to ensure that any validated txn has it set.
+    //
+    // This is an idempotent operation.
+    get_txn_metadata()->set_submitted_txn_commit_ts(begin_ts, commit_ts);
 
     // Optimization for single-threaded case: return success if the conflict window is empty.
     if (commit_ts == begin_ts + 1)
@@ -1034,7 +1046,9 @@ bool client_t::apply_txn_logs_to_shared_view()
         // The watermark cannot be advanced past any begin_ts whose txn is not
         // either in the TXN_TERMINATED state or in the TXN_SUBMITTED state with
         // its commit_ts in the TXN_DECIDED state. This means that the watermark
-        // can never advance into the conflict window of an undecided txn.
+        // can never advance into the conflict window of an undecided txn,
+        // ensuring that all logs of committed txns within the conflict window
+        // remain available for conflict testing.
         if (get_txn_metadata()->is_begin_ts(ts))
         {
             if (get_txn_metadata()->is_txn_active(ts))
@@ -1042,10 +1056,20 @@ bool client_t::apply_txn_logs_to_shared_view()
                 break;
             }
 
-            if (get_txn_metadata()->is_txn_submitted(ts)
-                && get_txn_metadata()->is_txn_validating(get_txn_metadata()->get_commit_ts_from_begin_ts(ts)))
+            if (get_txn_metadata()->is_txn_submitted(ts))
             {
-                break;
+                auto commit_ts = get_txn_metadata()->get_commit_ts_from_begin_ts(ts);
+                // NB: Because transitioning a begin_ts entry from ACTIVE to
+                // SUBMITTED and setting its linked commit_ts are not a single
+                // atomic operation, it is possible for a begin_ts entry in
+                // SUBMITTED state to have an invalid linked commit_ts. In that
+                // case, we know the linked commit_ts has not been validated
+                // (because validation sets the linked commit_ts before
+                // recording a decision).
+                if (!commit_ts.is_valid() || get_txn_metadata()->is_txn_validating(commit_ts))
+                {
+                    break;
+                }
             }
         }
 
@@ -1299,6 +1323,7 @@ bool client_t::update_post_gc_watermark()
     // that has not completed GC, in order to allow validating threads to safely
     // scan the conflict window while they hold a reference to the txn log
     // referenced by the commit_ts entry.)
+    //
     // If the post-GC watermark cannot be advanced to the current timestamp,
     // abort the scan.
     for (gaia_txn_id_t ts = post_gc_watermark + 1; ts <= post_apply_watermark; ++ts)
@@ -1314,11 +1339,22 @@ bool client_t::update_post_gc_watermark()
                 "The pre-apply watermark should not be advanced to an active begin_ts!");
 
             // We can only advance the post-GC watermark to a submitted begin_ts
-            // if its commit_ts is marked TXN_GC_COMPLETE.
-            if (get_txn_metadata()->is_txn_submitted(ts)
-                && !get_txn_metadata()->is_txn_gc_complete(get_txn_metadata()->get_commit_ts_from_begin_ts(ts)))
+            // if its commit_ts is marked TXN_GC_COMPLETE. This ensures that
+            // acquiring a reference to a txn log referenced by a commit_ts
+            // entry protects the entire conflict window of the commit_ts.
+            if (get_txn_metadata()->is_txn_submitted(ts))
             {
-                break;
+                auto commit_ts = get_txn_metadata()->get_commit_ts_from_begin_ts(ts);
+                // The pre-apply watermark can only advance to a submitted
+                // begin_ts if its commit_ts is validated, and the commit_ts
+                // cannot be validated without setting the begin_ts entry's
+                // commit_ts, so this commit_ts must be valid.
+                ASSERT_INVARIANT(commit_ts.is_valid() && get_txn_metadata()->is_txn_decided(commit_ts),
+                    "The pre-apply watermark should not be advanced to a submitted begin_ts with an undecided commit_ts!");
+                if (!get_txn_metadata()->is_txn_gc_complete(commit_ts))
+                {
+                    break;
+                }
             }
         }
 

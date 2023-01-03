@@ -61,7 +61,8 @@ public:
     inline gaia_txn_id_t get_commit_ts_from_begin_ts(gaia_txn_id_t begin_ts);
     inline db::log_offset_t get_txn_log_offset_from_ts(gaia_txn_id_t commit_ts);
 
-    inline void set_active_txn_submitted(gaia_txn_id_t begin_ts, gaia_txn_id_t commit_ts);
+    inline void set_active_txn_submitted(gaia_txn_id_t begin_ts);
+    inline void set_submitted_txn_commit_ts(gaia_txn_id_t begin_ts, gaia_txn_id_t commit_ts);
     inline void set_active_txn_terminated(gaia_txn_id_t begin_ts);
     inline void update_txn_decision(gaia_txn_id_t commit_ts, bool has_committed);
     inline void set_txn_durable(gaia_txn_id_t commit_ts);

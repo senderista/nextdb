@@ -119,10 +119,12 @@ void server_t::init_txn_history()
 {
     // Acquire a begin_ts and create a txn metadata entry for it.
     gaia_txn_id_t initial_begin_ts = get_txn_metadata()->register_begin_ts();
+    // Set begin_ts entry status to submitted.
+    get_txn_metadata()->set_active_txn_submitted(initial_begin_ts);
     // Acquire a commit_ts for this begin_ts and create a txn metadata entry for it.
     gaia_txn_id_t initial_commit_ts = get_txn_metadata()->register_commit_ts(initial_begin_ts, c_invalid_log_offset);
-    // Set begin_ts entry status to submitted.
-    get_txn_metadata()->set_active_txn_submitted(initial_begin_ts, initial_commit_ts);
+    // Set linked commit_ts in begin_ts entry.
+    get_txn_metadata()->set_submitted_txn_commit_ts(initial_begin_ts, initial_commit_ts);
     // Set commit_ts entry status to committed.
     get_txn_metadata()->update_txn_decision(initial_commit_ts, true);
     // We can unconditionally mark the initial txn durable since it is either

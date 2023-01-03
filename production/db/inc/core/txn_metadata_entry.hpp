@@ -80,11 +80,12 @@ public:
     inline gaia_txn_id_t get_timestamp();
     inline db::log_offset_t get_log_offset();
 
-    inline txn_metadata_entry_t set_submitted(gaia_txn_id_t commit_ts);
+    inline txn_metadata_entry_t set_submitted();
     inline txn_metadata_entry_t set_terminated();
     inline txn_metadata_entry_t set_decision(bool is_committed);
     inline txn_metadata_entry_t set_durable();
     inline txn_metadata_entry_t set_gc_complete();
+    inline txn_metadata_entry_t set_timestamp(gaia_txn_id_t ts);
 
     inline const char* status_to_str();
     inline std::string dump_metadata();

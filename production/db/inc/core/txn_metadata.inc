@@ -10,6 +10,7 @@ constexpr char c_message_uninitialized_timestamp[] = "Uninitialized timestamp!";
 constexpr char c_message_not_a_begin_timestamp[] = "Not a begin timestamp!";
 constexpr char c_message_not_a_commit_timestamp[] = "Not a commit timestamp!";
 constexpr char c_message_not_an_active_transaction[] = "Not an active transaction!";
+constexpr char c_message_not_a_submitted_transaction[] = "Not a submitted transaction!";
 
 bool txn_metadata_t::is_uninitialized_ts(gaia_txn_id_t ts, bool relaxed_load)
 {
@@ -133,15 +134,14 @@ bool txn_metadata_t::seal_uninitialized_ts(gaia_txn_id_t ts)
     return true;
 }
 
-void txn_metadata_t::set_active_txn_submitted(gaia_txn_id_t begin_ts, gaia_txn_id_t commit_ts)
+void txn_metadata_t::set_active_txn_submitted(gaia_txn_id_t begin_ts)
 {
     // Only an active txn can be submitted.
     ASSERT_PRECONDITION(is_txn_active(begin_ts), c_message_not_an_active_transaction);
-    ASSERT_PRECONDITION(is_commit_ts(commit_ts), c_message_not_a_commit_timestamp);
 
     // We don't need a CAS here because only the session thread can submit or terminate a txn,
     // and an active txn cannot be sealed.
-    auto new_entry = get_entry(begin_ts).set_submitted(commit_ts);
+    auto new_entry = get_entry(begin_ts).set_submitted();
     set_entry(begin_ts, new_entry);
 }
 
@@ -154,6 +154,29 @@ void txn_metadata_t::set_active_txn_terminated(gaia_txn_id_t begin_ts)
     // and an active txn cannot be sealed.
     auto new_entry = get_entry(begin_ts).set_terminated();
     set_entry(begin_ts, new_entry);
+}
+
+void txn_metadata_t::set_submitted_txn_commit_ts(gaia_txn_id_t begin_ts, gaia_txn_id_t commit_ts)
+{
+    ASSERT_PRECONDITION(is_txn_submitted(begin_ts), c_message_not_a_submitted_transaction);
+    ASSERT_PRECONDITION(is_commit_ts(commit_ts), c_message_not_a_commit_timestamp);
+
+    // This can be a relaxed load because a stale read will just make us
+    // redundantly set the same commit_ts.
+    bool relaxed_load = true;
+    auto old_entry = get_entry(begin_ts, relaxed_load);
+    auto old_commit_ts = old_entry.get_timestamp();
+    ASSERT_INVARIANT(!old_commit_ts.is_valid() || old_commit_ts == commit_ts,
+        "A begin_ts entry can only contain one commit_ts value!");
+    if (!old_commit_ts.is_valid())
+    {
+        // We don't need a CAS here because setting the commit_ts is idempotent.
+        auto new_entry = old_entry.set_timestamp(commit_ts);
+        // A relaxed store is safe because all current callers handle the case
+        // of reading an invalid commit_ts from a submitted begin_ts entry.
+        bool relaxed_store = true;
+        set_entry(begin_ts, new_entry, relaxed_store);
+    }
 }
 
 void txn_metadata_t::update_txn_decision(gaia_txn_id_t commit_ts, bool has_committed)

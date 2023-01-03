@@ -56,6 +56,8 @@ txn_metadata_entry_t txn_metadata_entry_t::new_commit_ts_entry(gaia_txn_id_t beg
     uint64_t shifted_log_offset = static_cast<uint64_t>(log_offset) << c_txn_log_offset_shift;
     constexpr uint64_t c_shifted_status_flags{
         c_txn_status_validating << c_txn_status_flags_shift};
+    // The timestamp must fit into the low 42 bits of the metadata word.
+    ASSERT_INVARIANT((begin_ts & c_txn_ts_mask) == begin_ts, "Timestamp must fit into 42 bits!");
     return txn_metadata_entry_t{c_shifted_status_flags | shifted_log_offset | begin_ts};
 }
 
@@ -145,7 +147,7 @@ uint64_t txn_metadata_entry_t::get_status()
 
 gaia_txn_id_t txn_metadata_entry_t::get_timestamp()
 {
-    // The timestamp is in the low 42 bits of the txn metadata.
+    // The timestamp is in the low 42 bits of the metadata word.
     return (m_word & c_txn_ts_mask);
 }
 
@@ -157,7 +159,7 @@ db::log_offset_t txn_metadata_entry_t::get_log_offset()
     return (m_word & c_txn_log_offset_mask) >> c_txn_log_offset_shift;
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_submitted(gaia_txn_id_t commit_ts)
+txn_metadata_entry_t txn_metadata_entry_t::set_submitted()
 {
     ASSERT_PRECONDITION(is_active(), "Not an active transaction!");
 
@@ -165,8 +167,7 @@ txn_metadata_entry_t txn_metadata_entry_t::set_submitted(gaia_txn_id_t commit_ts
     constexpr uint64_t c_submitted_flags
         = c_txn_status_submitted << c_txn_status_flags_shift;
 
-    // A submitted begin_ts metadata has the commit_ts in its low bits.
-    return txn_metadata_entry_t{c_submitted_flags | commit_ts};
+    return txn_metadata_entry_t{m_word | c_submitted_flags};
 }
 
 txn_metadata_entry_t txn_metadata_entry_t::set_terminated()
@@ -212,6 +213,13 @@ txn_metadata_entry_t txn_metadata_entry_t::set_gc_complete()
     // Set GC status to TXN_GC_COMPLETE.
     return txn_metadata_entry_t{
         m_word | (c_txn_gc_complete << c_txn_gc_flags_shift)};
+}
+
+txn_metadata_entry_t txn_metadata_entry_t::set_timestamp(gaia_txn_id_t ts)
+{
+    // The timestamp must fit into the low 42 bits of the metadata word.
+    ASSERT_INVARIANT((ts & c_txn_ts_mask) == ts, "Timestamp must fit into 42 bits!");
+    return txn_metadata_entry_t{m_word | ts};
 }
 
 const char* txn_metadata_entry_t::status_to_str()

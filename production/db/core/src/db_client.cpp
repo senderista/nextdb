@@ -237,16 +237,12 @@ void client_t::begin_transaction()
         "Session context should be initialized already at the start of a new transaction!");
 
     ASSERT_PRECONDITION(
-        s_session_context->txn_context,
-        "Transaction context should be allocated already at the start of a new transaction!");
-
-    ASSERT_PRECONDITION(
-        !(s_session_context->txn_context->initialized()),
+        !(s_session_context->txn_context.initialized()),
         "Transaction context should not be initialized already at the start of a new transaction!");
 
     // Clean up all transaction-local session state.
     auto cleanup_txn_context = make_scope_guard([&] {
-        s_session_context->txn_context->clear();
+        s_session_context->txn_context.clear();
     });
 
     auto cleanup_snapshot_logs = make_scope_guard([&] {
@@ -284,7 +280,7 @@ void client_t::begin_transaction()
     auto cleanup_txn_metadata_protection = make_scope_guard(unprotect_txn_metadata);
 
     // Allocate a new begin_ts for this txn and initialize its metadata in the txn table.
-    s_session_context->txn_context->txn_id = get_txn_metadata()->register_begin_ts();
+    s_session_context->txn_context.txn_id = get_txn_metadata()->register_begin_ts();
 
     // The begin_ts returned by register_begin_ts() should always be valid because it
     // retries if it is concurrently sealed.
@@ -305,7 +301,7 @@ void client_t::begin_transaction()
     }
 
     // Allocate new txn log.
-    s_session_context->txn_context->txn_log_offset = get_logs()->allocate_log_offset(txn_id());
+    s_session_context->txn_context.txn_log_offset = get_logs()->allocate_log_offset(txn_id());
     if (!txn_log_offset().is_valid())
     {
         throw transaction_log_allocation_failure_internal();
@@ -379,7 +375,7 @@ void client_t::rollback_transaction()
     verify_txn_active();
 
     ASSERT_PRECONDITION(
-        s_session_context->txn_context->initialized(),
+        s_session_context->txn_context.initialized(),
         "Transaction context should be initialized already at the end of a transaction!");
 
     // Protect all txn metadata accessed by this function.
@@ -388,7 +384,7 @@ void client_t::rollback_transaction()
 
     // Clean up all transaction-local session state.
     auto cleanup_txn_context = make_scope_guard([&] {
-        s_session_context->txn_context->clear();
+        s_session_context->txn_context.clear();
     });
 
     // Apply our undo log to roll back any changes to our private snapshot.
@@ -419,7 +415,7 @@ void client_t::commit_transaction()
     verify_txn_active();
 
     ASSERT_PRECONDITION(
-        s_session_context->txn_context->initialized(),
+        s_session_context->txn_context.initialized(),
         "Transaction context should be initialized already at the end of a transaction!");
 
     // This optimization to treat committing a read-only txn as a rollback
@@ -434,7 +430,7 @@ void client_t::commit_transaction()
 
     // Clean up all transaction-local session state when we exit.
     auto cleanup_txn_context = make_scope_guard([&] {
-        s_session_context->txn_context->clear();
+        s_session_context->txn_context.clear();
     });
 
     auto cleanup_snapshot_logs = make_scope_guard([&] {

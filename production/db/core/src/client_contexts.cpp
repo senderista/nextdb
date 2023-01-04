@@ -15,8 +15,6 @@ namespace db
 
 client_session_context_t::client_session_context_t()
 {
-    txn_context = std::make_unique<client_transaction_context_t>();
-
     data_mappings.push_back({data_mapping_t::index_t::locators, &shared_locators, c_gaia_mem_locators_prefix});
     data_mappings.push_back({data_mapping_t::index_t::counters, &shared_counters, c_gaia_mem_counters_prefix});
     data_mappings.push_back({data_mapping_t::index_t::data, &shared_data, c_gaia_mem_data_prefix});
@@ -54,7 +52,7 @@ void client_session_context_t::clear()
     data_mapping_t::close(data_mappings);
 
     // Just in case transaction context hasn't been cleared already.
-    txn_context->clear();
+    txn_context.clear();
 }
 
 } // namespace db

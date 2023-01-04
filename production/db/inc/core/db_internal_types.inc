@@ -284,3 +284,8 @@ txn_log_t* logs_t::get_log_from_offset(log_offset_t offset)
 
     return &(m_logs[static_cast<size_t>(offset)]);
 }
+
+size_t logs_t::get_used_logs_count()
+{
+    return count_set_bits(m_allocated_log_offsets_bitmap, std::size(m_allocated_log_offsets_bitmap));
+}

@@ -365,6 +365,10 @@ public:
     // Returns the txn log at the given offset.
     inline txn_log_t* get_log_from_offset(log_offset_t offset);
 
+    // Returns approximate count of log offsets currently in use.
+    // For debugging purposes only.
+    inline size_t get_used_logs_count();
+
 private:
     // Allocates the first used log offset.
     inline log_offset_t allocate_used_log_offset();

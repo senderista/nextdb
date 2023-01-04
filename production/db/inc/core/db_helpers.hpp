@@ -31,6 +31,17 @@ namespace gaia
 namespace db
 {
 
+inline void dump_system_stats()
+{
+    std::cerr << "Used logs: " << gaia::db::get_logs()->get_used_logs_count() << std::endl;
+    std::cerr << "Used chunks: " << gaia::db::get_memory_manager()->get_used_chunks_count() << std::endl;
+    size_t txn_metadata_used_pages_count = ((
+        gaia::db::get_counters()->last_txn_id -
+        gaia::db::get_watermarks()->get_watermark(watermark_type_t::pre_truncate)
+    ) * sizeof(transactions::txn_metadata_entry_t)) / c_page_size_in_bytes;
+    std::cerr << "Used txn metadata pages: " << txn_metadata_used_pages_count << std::endl;
+}
+
 inline common::gaia_id_t allocate_id()
 {
     counters_t* counters = gaia::db::get_counters();
@@ -51,6 +62,13 @@ inline gaia_txn_id_t allocate_txn_id()
     DEBUG_ASSERT_INVARIANT(
         new_txn_id < (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width),
         "Transaction ID exceeds allowed range!");
+
+#ifdef DUMP_STATS
+    if (new_txn_id % c_dump_stats_timestamp_interval == 0)
+    {
+        dump_system_stats();
+    }
+#endif
 
     return static_cast<gaia_txn_id_t>(new_txn_id);
 }

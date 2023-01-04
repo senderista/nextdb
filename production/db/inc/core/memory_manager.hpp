@@ -46,6 +46,10 @@ public:
     // Updates the "allocated chunk bitmap" after allocating or deallocating a chunk.
     void update_chunk_allocation_status(chunk_offset_t chunk_offset, bool is_allocated);
 
+    // Returns approximate count of chunks currently in use.
+    // For debugging purposes only.
+    size_t get_used_chunks_count();
+
 private:
     // A pointer to our metadata information, stored inside the memory range that we manage.
     memory_manager_metadata_t* m_metadata;

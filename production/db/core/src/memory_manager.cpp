@@ -220,6 +220,12 @@ void memory_manager_t::update_chunk_allocation_status(chunk_offset_t chunk_offse
         chunk_offset, is_allocated);
 }
 
+size_t memory_manager_t::get_used_chunks_count()
+{
+    return count_set_bits(m_metadata->allocated_chunks_bitmap,
+        memory_manager_metadata_t::c_chunk_bitmap_size_in_words);
+}
+
 } // namespace memory_manager
 } // namespace db
 } // namespace gaia

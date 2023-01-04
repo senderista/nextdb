@@ -25,6 +25,9 @@ option(ENABLE_PROFILING_SUPPORT "Instrument binaries for profiling" OFF)
 
 option(DISABLE_ASSERTS "Disable assertions" OFF)
 
+# Enable this option to print system statistics to the console every 1M txns.
+option(DUMP_STATS "Periodically dump system stats to console" OFF)
+
 # Enable this option to stress-test safe timestamp correctness.
 option(TXN_METADATA_GC_IMMEDIATE "Immediately GC txn metadata" OFF)
 
@@ -118,6 +121,8 @@ target_compile_options(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_ASSERTS}>
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${TXN_METADATA_GC_IMMEDIATE}>:TXN_METADATA_GC_IMMEDIATE>)
 # Propagate the DISABLE_CHUNK_DECOMMIT option to a macro definition.
 target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DISABLE_CHUNK_DECOMMIT}>:DISABLE_CHUNK_DECOMMIT>)
+# Propagate the DUMP_STATS option to a macro definition.
+target_compile_definitions(gaia_build_options INTERFACE $<$<BOOL:${DUMP_STATS}>:DUMP_STATS>)
 
 # Always use libc++ for better C++20 and sanitizer support.
 # (For eventual MemorySanitizer support, we need all targets in debug builds to

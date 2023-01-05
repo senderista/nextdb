@@ -289,3 +289,8 @@ size_t logs_t::get_used_logs_count()
 {
     return count_set_bits(m_allocated_log_offsets_bitmap, std::size(m_allocated_log_offsets_bitmap));
 }
+
+size_t logs_t::get_all_used_logs_count()
+{
+    return m_next_unused_log_offset.load(std::memory_order_relaxed);
+}

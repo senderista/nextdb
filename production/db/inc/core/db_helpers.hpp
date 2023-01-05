@@ -34,7 +34,9 @@ namespace db
 inline void dump_system_stats()
 {
     std::cerr << "Used logs: " << gaia::db::get_logs()->get_used_logs_count() << std::endl;
+    std::cerr << "All used logs: " << gaia::db::get_logs()->get_all_used_logs_count() << std::endl;
     std::cerr << "Used chunks: " << gaia::db::get_memory_manager()->get_used_chunks_count() << std::endl;
+    std::cerr << "All used chunks: " << gaia::db::get_memory_manager()->get_all_used_chunks_count() << std::endl;
     size_t txn_metadata_used_pages_count = ((
         gaia::db::get_counters()->last_txn_id -
         gaia::db::get_watermarks()->get_watermark(watermark_type_t::pre_truncate)

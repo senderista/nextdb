@@ -50,6 +50,10 @@ public:
     // For debugging purposes only.
     size_t get_used_chunks_count();
 
+    // Returns approximate count of chunks ever in use.
+    // For debugging purposes only.
+    size_t get_all_used_chunks_count();
+
 private:
     // A pointer to our metadata information, stored inside the memory range that we manage.
     memory_manager_metadata_t* m_metadata;

@@ -226,6 +226,11 @@ size_t memory_manager_t::get_used_chunks_count()
         memory_manager_metadata_t::c_chunk_bitmap_size_in_words);
 }
 
+size_t memory_manager_t::get_all_used_chunks_count()
+{
+    return m_metadata->next_available_unused_chunk_offset.load(std::memory_order_relaxed);
+}
+
 } // namespace memory_manager
 } // namespace db
 } // namespace gaia

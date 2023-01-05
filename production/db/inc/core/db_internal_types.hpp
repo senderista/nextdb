@@ -369,6 +369,10 @@ public:
     // For debugging purposes only.
     inline size_t get_used_logs_count();
 
+    // Returns approximate count of all log offsets ever in use.
+    // For debugging purposes only.
+    inline size_t get_all_used_logs_count();
+
 private:
     // Allocates the first used log offset.
     inline log_offset_t allocate_used_log_offset();

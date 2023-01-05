@@ -1429,9 +1429,10 @@ bool client_t::update_pre_truncate_watermark(
     // Abort if the largest possible range of metadata that can be freed (from
     // the last truncation boundary to the current post-GC watermark) does not
     // exceed the minimum page threshold.
-    // We add 1 because in general the truncation boundaries will not fall on a
-    // page boundary.
-    size_t pages_to_decommit_upper_bound = 1 + get_txn_metadata_page_count_from_ts_range(
+    // Note that we do not free the page containing the new value of the
+    // pre-truncate watermark, so we do not count that page toward the
+    // decommitted page count.
+    size_t pages_to_decommit_upper_bound = get_txn_metadata_page_count_from_ts_range(
         old_pre_truncate_watermark, get_watermarks()->get_watermark(watermark_type_t::post_gc));
 
     if (pages_to_decommit_upper_bound < transactions::c_min_pages_to_free)
@@ -1472,7 +1473,7 @@ bool client_t::update_pre_truncate_watermark(
     return false;
 }
 
-bool client_t::truncate_txn_table(
+void client_t::truncate_txn_table(
     gaia_txn_id_t old_pre_truncate_watermark, gaia_txn_id_t new_pre_truncate_watermark)
 {
     // Truncate the txn table by decommitting its unused physical pages. Because
@@ -1482,28 +1483,29 @@ bool client_t::truncate_txn_table(
     // pointer if the txn table were implemented as a circular buffer.
 
     // Calculate the number of pages between the old and new pre-truncate
-    // watermark values. If the result exceeds a threshold, then decommit all
-    // such pages.
+    // watermark values.
+    // We never free the page in which the new pre-truncate watermark resides,
+    // because in general it will contain in-use txn metadata entries (unless
+    // the pre-truncate watermark is at the very last entry, but that special
+    // case is too rare to be worth handling). Therefore, we always need to free
+    // the page containing the previous value of the pre-truncate watermark.
+    // Note that since we do not free the page containing the new value of the
+    // pre-truncate watermark, we do not count that page toward the decommitted
+    // page count.
     size_t pages_to_decommit_count = get_txn_metadata_page_count_from_ts_range(
         old_pre_truncate_watermark, new_pre_truncate_watermark);
-    if (pages_to_decommit_count > transactions::c_min_pages_to_free)
+
+    char* prev_page_start_address = get_txn_metadata_page_address_from_ts(old_pre_truncate_watermark);
+
+    // MADV_FREE seems like the best fit for our needs, since it allows the OS
+    // to lazily reclaim decommitted pages. However, it returns EINVAL when used
+    // with MAP_SHARED, so we need to use MADV_REMOVE (which works with memfd
+    // objects). According to the manpage, madvise(MADV_REMOVE) is equivalent to
+    // fallocate(FALLOC_FL_PUNCH_HOLE).
+    if (-1 == ::madvise(prev_page_start_address, pages_to_decommit_count * c_page_size_in_bytes, MADV_REMOVE))
     {
-        char* prev_page_start_address = get_txn_metadata_page_address_from_ts(old_pre_truncate_watermark);
-
-        // MADV_FREE seems like the best fit for our needs, since it allows the OS
-        // to lazily reclaim decommitted pages. However, it returns EINVAL when used
-        // with MAP_SHARED, so we need to use MADV_REMOVE (which works with memfd
-        // objects). According to the manpage, madvise(MADV_REMOVE) is equivalent to
-        // fallocate(FALLOC_FL_PUNCH_HOLE).
-        if (-1 == ::madvise(prev_page_start_address, pages_to_decommit_count * c_page_size_in_bytes, MADV_REMOVE))
-        {
-            throw_system_error("madvise(MADV_REMOVE) failed!");
-        }
-
-        return true;
+        throw_system_error("madvise(MADV_REMOVE) failed!");
     }
-
-    return false;
 }
 
 char* client_t::get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts)

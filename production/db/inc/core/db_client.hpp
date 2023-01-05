@@ -145,9 +145,11 @@ private:
         gaia_txn_id_t& old_pre_truncate_watermark, gaia_txn_id_t& new_pre_truncate_watermark);
 
     // Truncates the txn table at the highest page boundary less than the pre-truncate watermark.
-    // Returns true if any pages were decommitted, false otherwise.
-    static bool truncate_txn_table(gaia_txn_id_t old_pre_truncate_watermark, gaia_txn_id_t new_pre_truncate_watermark);
+    static void truncate_txn_table(gaia_txn_id_t old_pre_truncate_watermark, gaia_txn_id_t new_pre_truncate_watermark);
+    // Returns the start address of the page containing the txn metadata entry for this timestamp.
     static char* get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts);
+    // Returns the number of pages between the start page (inclusive) and end
+    // page (exclusive) of the given timestamp range.
     static size_t get_txn_metadata_page_count_from_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
 
     static void apply_txn_log_from_ts(gaia_txn_id_t commit_ts);

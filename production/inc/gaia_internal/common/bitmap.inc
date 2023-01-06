@@ -211,26 +211,26 @@ static void safe_set_bit_range_value(
 }
 
 static size_t count_set_bits(
-    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t end_limit_exclusive_bit_index)
+    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t end_limit_bit_index_exclusive)
 {
     DEBUG_ASSERT_PRECONDITION(
         validate_bitmap_parameters(bitmap, bitmap_size_in_words), "Invalid bitmap parameters!");
 
     // If no limit bit index was provided, set the limit to just past the last bit index in the bitmap.
-    if (end_limit_exclusive_bit_index == c_max_bit_index)
+    if (end_limit_bit_index_exclusive == c_max_bit_index)
     {
-        end_limit_exclusive_bit_index = bitmap_size_in_words * common::c_uint64_bit_count;
+        end_limit_bit_index_exclusive = bitmap_size_in_words * common::c_uint64_bit_count;
     }
     else
     {
         DEBUG_ASSERT_PRECONDITION(
             validate_bit_index(
-                bitmap_size_in_words, end_limit_exclusive_bit_index - 1),
+                bitmap_size_in_words, end_limit_bit_index_exclusive - 1),
             "Invalid end bit index!");
     }
 
-    size_t end_word_index_exclusive = (end_limit_exclusive_bit_index + common::c_uint64_bit_count - 1) / common::c_uint64_bit_count;
-    size_t end_bit_index_in_word_exclusive = end_limit_exclusive_bit_index % common::c_uint64_bit_count;
+    size_t end_word_index_exclusive = (end_limit_bit_index_exclusive + common::c_uint64_bit_count - 1) / common::c_uint64_bit_count;
+    size_t end_bit_index_in_word_exclusive = end_limit_bit_index_exclusive % common::c_uint64_bit_count;
     // If end_bit_index_in_word_exclusive == 0, then we need to convert it to
     // the word size in bits, because that means that the exclusive upper bound
     // is at the very end of the word.
@@ -261,26 +261,34 @@ static size_t count_set_bits(
 }
 
 static size_t find_first_unset_bit(
-    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t end_limit_exclusive_bit_index)
+    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words,
+    size_t start_bit_index, size_t end_limit_bit_index_exclusive)
 {
     DEBUG_ASSERT_PRECONDITION(
         validate_bitmap_parameters(bitmap, bitmap_size_in_words), "Invalid bitmap parameters!");
 
     // If no limit bit index was provided, set the limit to the last bit index in the bitmap.
-    if (end_limit_exclusive_bit_index == c_max_bit_index)
+    if (end_limit_bit_index_exclusive == c_max_bit_index)
     {
-        end_limit_exclusive_bit_index = bitmap_size_in_words * common::c_uint64_bit_count;
+        end_limit_bit_index_exclusive = bitmap_size_in_words * common::c_uint64_bit_count;
     }
     else
     {
         DEBUG_ASSERT_PRECONDITION(
             validate_bit_index(
-                bitmap_size_in_words, end_limit_exclusive_bit_index - 1),
+                bitmap_size_in_words, end_limit_bit_index_exclusive - 1),
             "Invalid end bit index!");
     }
 
-    size_t end_word_index_exclusive = (end_limit_exclusive_bit_index + common::c_uint64_bit_count - 1) / common::c_uint64_bit_count;
-    size_t end_bit_index_in_word_exclusive = end_limit_exclusive_bit_index % common::c_uint64_bit_count;
+    DEBUG_ASSERT_PRECONDITION(
+        start_bit_index < end_limit_bit_index_exclusive,
+        "find_first_unset_bit() was called with an invalid start index!");
+
+    size_t start_word_index = start_bit_index / common::c_uint64_bit_count;
+    size_t start_bit_index_in_word = start_bit_index % common::c_uint64_bit_count;
+
+    size_t end_word_index_exclusive = (end_limit_bit_index_exclusive + common::c_uint64_bit_count - 1) / common::c_uint64_bit_count;
+    size_t end_bit_index_in_word_exclusive = end_limit_bit_index_exclusive % common::c_uint64_bit_count;
 
     // If end_bit_index_in_word_exclusive == 0, then we need to convert it to
     // the word size in bits, because that means that the exclusive upper bound
@@ -290,9 +298,19 @@ static size_t find_first_unset_bit(
         end_bit_index_in_word_exclusive = common::c_uint64_bit_count;
     }
 
-    for (size_t word_index = 0; word_index < end_word_index_exclusive; ++word_index)
+    for (size_t word_index = start_word_index; word_index < end_word_index_exclusive; ++word_index)
     {
         uint64_t word = bitmap[word_index];
+
+        // If we're processing the first word and we're not supposed to process it in its entirety,
+        // then first mask out the bits that we are supposed to ignore before doing any check.
+        if (word_index == start_word_index && start_bit_index_in_word != 0)
+        {
+            uint64_t mask = (1UL << start_bit_index_in_word) - 1;
+            // Because we're looking out for unset bits,
+            // the masking is done by setting the irrelevant bits to 1.
+            word |= mask;
+        }
 
         // If we're processing the last word and we're not supposed to process it in its entirety,
         // then first mask out the bits that we are supposed to ignore before doing any check.

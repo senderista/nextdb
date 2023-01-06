@@ -33,7 +33,8 @@ namespace transactions
 #ifdef TXN_METADATA_GC_IMMEDIATE
 constexpr size_t c_min_pages_to_free = 1;
 #else
-constexpr size_t c_min_pages_to_free = 64;
+// This is based on empirical measurement.
+constexpr size_t c_min_pages_to_free = 8;
 #endif
 
 // This class encapsulates the txn metadata array. It handles all reads, writes,

@@ -97,9 +97,11 @@ private:
         txn_metadata_entry_t expected_value, txn_metadata_entry_t desired_value);
 
 private:
-    // This is an effectively infinite array of timestamp entries, indexed by
-    // the txn timestamp counter and containing metadata for every txn that has
-    // been submitted to the system.
+    // This is an effectively infinite array of timestamp entries, implemented
+    // as a finite circular buffer, logically indexed by the txn timestamp
+    // counter and containing metadata for every txn that has been submitted to
+    // the system. When a prefix of timestamp entries falls behind the
+    // pre-reclaim watermark, it can be overwritten with new entries.
     //
     // Entries may be "uninitialized", "sealed" (i.e., initialized with a
     // special "junk" value and forbidden to be used afterward), or initialized
@@ -118,34 +120,10 @@ private:
     // between any threads that read or write the same txn metadata. Any writes
     // to entries that may be written by multiple threads use CAS operations.
     //
-    // The array's memory is managed via mmap(MAP_NORESERVE). We reserve 32TB of
-    // virtual address space (1/8 of the total virtual address space available
-    // to the process), but allocate physical pages only on first access. When a
-    // range of timestamp entries falls behind the watermark, its physical pages
-    // can be decommitted via madvise(MADV_DONTNEED).
-    //
-    // REVIEW: Because we reserve 2^45 bytes of virtual address space and each
-    // array entry is 8 bytes, we can address the whole range using 2^42
-    // timestamps. If we allocate 2^10 timestamps/second, we will use up all our
-    // timestamps in 2^32 seconds, or about 2^7 years. If we allocate 2^20
-    // timestamps/second, we will use up all our timestamps in 2^22 seconds, or
-    // about a month and a half. If this is an issue, then we could treat the
-    // array as a circular buffer, using a separate wraparound counter to
-    // calculate the array offset from a timestamp, and we can use the 3
-    // reserved bits in the txn metadata to extend our range by a factor of 8,
-    // so we could allocate 2^20 timestamps/second for a full year. If we need a
-    // still larger timestamp range (say 64-bit timestamps, with wraparound), we
-    // could just store the difference between a commit timestamp and its txn's
-    // begin timestamp, which should be possible to bound to no more than half
-    // the bits we use for the full timestamp, so we would still need only 32
-    // bits for a timestamp reference in the timestamp metadata. (We could store
-    // the array offset instead, but that would be dangerous when we approach
-    // wraparound.)
-    //
-    // FIXME: To prevent test failures when multiple sessions are opened in the
-    // same process, we restrict timestamps to a much smaller range (2^35) than
-    // would be suitable for production. This will be fixed when we transition
-    // the txn metadata array to a ring buffer.
+    // REVIEW: We currently limit timestamps to 42 bits, but could extend them
+    // if necessary up to 64 bits, if we replace linked timestamps in the
+    // metadata word with relative offsets. If the circular buffer cannot exceed
+    // 2^16 entries, the offsets could be restricted to 16 bits.
     std::atomic<uint64_t> m_txn_metadata_map[txn_metadata_entry_t::get_max_ts_count() / c_session_limit];
 };
 

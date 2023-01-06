@@ -115,6 +115,46 @@ TEST(common__bitmap__test, find_first_unset_bit)
     ASSERT_EQ((c_bitmap_size_in_words - 1) * c_uint64_bit_count, count_set_bits(bitmap, c_bitmap_size_in_words));
 }
 
+TEST(common__bitmap__test, find_first_unset_bit_from_start_index)
+{
+    constexpr size_t c_bitmap_size_in_words = 3;
+    std::atomic<uint64_t> bitmap[c_bitmap_size_in_words] = {0};
+
+    // Start with an empty bitmap and set every other bit.
+    for (size_t i = 0; i < c_bitmap_size_in_words * c_uint64_bit_count; ++i)
+    {
+        // Set only even-numbered bits.
+        if (i % 2 == 0)
+        {
+            set_bit_value(bitmap, c_bitmap_size_in_words, i, true);
+        }
+    }
+
+    // Advance the start index from the beginning, and verify that
+    // find_first_unset_bit finds the next unset bit.
+    for (size_t i = 0; i < c_bitmap_size_in_words * c_uint64_bit_count; ++i)
+    {
+        // If we're on an even-numbered index, assert that we find the first unset bit at the next index.
+        // Otherwise, assert that we find the first unset bit at the current index.
+        size_t expected_found_index = (i % 2 == 0) ? (i + 1) : i;
+        ASSERT_EQ(expected_found_index, find_first_unset_bit(
+            bitmap, c_bitmap_size_in_words, i));
+    }
+
+    // Finally, test the case where the start and (exclusive) end index are in the same word.
+    std::atomic<uint64_t> single_word_bitmap[1] = {0};
+
+    // Test case where start index and end index are adjacent (this is valid).
+    size_t expected_found_index = c_uint64_bit_count / 2;
+    ASSERT_EQ(expected_found_index, find_first_unset_bit(
+        single_word_bitmap, 1, expected_found_index, expected_found_index + 1));
+
+    // Test case where start index and end index are not adjacent (but still valid).
+    expected_found_index = c_uint64_bit_count / 2;
+    ASSERT_EQ(expected_found_index, find_first_unset_bit(
+        single_word_bitmap, 1, expected_found_index, expected_found_index + 2));
+}
+
 TEST(common__bitmap__test, find_last_set_bit)
 {
     constexpr size_t c_bitmap_size_in_words = 3;
@@ -153,11 +193,11 @@ TEST(common__bitmap__test, limit)
 
         if (i < end_limit_bit_index)
         {
-            ASSERT_EQ(i, find_first_unset_bit(&bitmap, 1, end_limit_bit_index));
+            ASSERT_EQ(i, find_first_unset_bit(&bitmap, 1, 0, end_limit_bit_index));
         }
         else
         {
-            ASSERT_EQ(c_max_bit_index, find_first_unset_bit(&bitmap, 1, end_limit_bit_index));
+            ASSERT_EQ(c_max_bit_index, find_first_unset_bit(&bitmap, 1, 0, end_limit_bit_index));
         }
 
         if (i < end_limit_bit_index)

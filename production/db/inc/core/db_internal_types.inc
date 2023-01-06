@@ -142,7 +142,7 @@ log_offset_t logs_t::allocate_used_log_offset()
         size_t first_unallocated_index = find_first_unset_bit(
             m_allocated_log_offsets_bitmap,
             std::size(m_allocated_log_offsets_bitmap),
-            first_unused_offset);
+            0, first_unused_offset);
 
         // If our scan doesn't find any unset bits, immediately return failure
         // rather than retrying the scan (otherwise this could lead to an

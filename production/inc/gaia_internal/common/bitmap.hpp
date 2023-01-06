@@ -68,13 +68,14 @@ static inline void safe_set_bit_range_value(
 // end_limit_bit_index can limit the counting to a prefix of a large bitmap.
 // If end_limit_bit_index (exclusive) is not set, we'll count the entire bitmap.
 static inline size_t count_set_bits(
-    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t end_limit_exclusive_bit_index = c_max_bit_index);
+    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t end_limit_bit_index_exclusive = c_max_bit_index);
 
 // Find the first unset bit in a bitmap.
 // end_limit_bit_index can limit the search to a prefix of a large bitmap.
 // If end_limit_bit_index (exclusive) is not set, we'll search the entire bitmap.
 static inline size_t find_first_unset_bit(
-    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t end_limit_exclusive_bit_index = c_max_bit_index);
+    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words,
+    size_t start_bit_index = 0, size_t end_limit_bit_index_exclusive = c_max_bit_index);
 
 // Find the last set bit in a bitmap.
 static inline size_t find_last_set_bit(std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words);

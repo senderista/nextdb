@@ -216,16 +216,8 @@ void chunk_manager_t::mark_slot_deallocated(slot_offset_t slot_offset)
 
 bool chunk_manager_t::allocate_chunk()
 {
-    bool is_allocated = m_metadata->apply_chunk_transition(
+    return m_metadata->apply_chunk_transition(
         chunk_state_t::empty, chunk_state_t::in_use);
-
-    // If allocation succeeded, update the "allocated chunk bitmap" in the memory manager.
-    if (is_allocated)
-    {
-        gaia::db::get_memory_manager()->update_chunk_allocation_status(m_chunk_offset, true);
-    }
-
-    return is_allocated;
 }
 
 void chunk_manager_t::retire_chunk(chunk_version_t version)

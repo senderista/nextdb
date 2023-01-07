@@ -20,6 +20,7 @@
 
 #include "gaia/common.hpp"
 
+#include "gaia_internal/common/backoff.hpp"
 #include "gaia_internal/common/debug_assert.hpp"
 
 namespace gaia
@@ -57,7 +58,8 @@ static inline void safe_set_bit_value(
 // Will fail if another thread is updating the word in which the bit lies.
 // Caller could check bit value again to decide whether to retry.
 static inline bool try_set_bit_value(
-    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t bit_index, bool value, bool fail_if_already_set = false);
+    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t bit_index, bool value,
+    bool fail_if_already_set = false, bool fail_if_contended = false);
 
 // Sets the value of a range of bits.
 // This method is safe in the sense that it will not cause a loss of updates to other bits than the ones we set.

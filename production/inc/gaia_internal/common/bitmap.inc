@@ -27,16 +27,18 @@ static size_t find_last_set_bit_in_word(uint64_t word)
     return last_set_bit_index_in_word;
 }
 
+// Fails if any of the bits in the mask are set/unset in the word.
+static bool is_mask_present_in_word(uint64_t word, uint64_t mask, bool set)
+{
+    return (word & mask) != (set ? 0 : mask);
+}
+
 static bool apply_mask_to_word(
     uint64_t& word, uint64_t mask, bool set, bool fail_if_already_applied = false)
 {
-    if (fail_if_already_applied)
+    if (fail_if_already_applied && is_mask_present_in_word(word, mask, set))
     {
-        // Fail if any of the bits in the mask are set/unset in the word.
-        if ((word & mask) != (set ? 0 : mask))
-        {
-            return false;
-        }
+        return false;
     }
 
     // See: https://graphics.stanford.edu/~seander/bithacks.html#ConditionalSetOrClearBitsWithoutBranching
@@ -62,23 +64,50 @@ static bool apply_mask_to_word(
 }
 
 static bool try_apply_mask_to_word(
-    std::atomic<uint64_t>& word, uint64_t mask, bool set, bool fail_if_already_applied = false)
+    std::atomic<uint64_t>& word, uint64_t mask, bool set, bool fail_if_already_applied = false, bool fail_if_contended = false)
 {
-    // We read the word once, because other threads may be updating it.
-    // A relaxed load is sufficient, because a stale read will cause the
-    // subsequent CAS to fail.
-    uint64_t old_word = word.load(std::memory_order_relaxed);
-    uint64_t new_word = old_word;
-
-    // REVIEW: If callers need to distinguish between CAS failure and failure
-    // because some mask bits were already set/unset in the word, then we need
-    // to revise this interface.
-    if (!apply_mask_to_word(new_word, mask, set, fail_if_already_applied))
+    while (true)
     {
-        return false;
-    }
+        // We read the word once, because other threads may be updating it.
+        // A relaxed load is sufficient, because a stale read will cause the
+        // subsequent CAS to fail.
+        uint64_t old_word = word.load(std::memory_order_relaxed);
 
-    return word.compare_exchange_strong(old_word, new_word);
+        uint64_t new_word = old_word;
+        if (!apply_mask_to_word(new_word, mask, set, fail_if_already_applied))
+        {
+            return false;
+        }
+
+        if (word.compare_exchange_strong(old_word, new_word))
+        {
+            return true;
+        }
+
+        // REVIEW: If callers need to distinguish between CAS failure and failure
+        // because some mask bits were already set/unset in the word, then we need
+        // to revise this interface.
+        if (fail_if_contended)
+        {
+            return false;
+        }
+
+        if (fail_if_already_applied)
+        {
+            // If the CAS failed, the previous value of the word is now present in old_word.
+            if (is_mask_present_in_word(old_word, mask, set))
+            {
+                return false;
+            }
+
+            // The CAS "spuriously" failed (due to unrelated bits in the same
+            // word being modified), so back off to reduce contention.
+            constexpr size_t c_cas_backoff_us{1};
+            constexpr size_t c_cas_backoff_iterations{
+                c_cas_backoff_us * gaia::common::backoff::c_pause_iterations_per_us};
+            gaia::common::backoff::spin_wait(c_cas_backoff_iterations);
+        }
+    }
 }
 
 static void safe_apply_mask_to_word(
@@ -142,12 +171,12 @@ static void safe_set_bit_value(
 }
 
 static bool try_set_bit_value(
-    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t bit_index, bool value, bool fail_if_already_set)
+    std::atomic<uint64_t>* bitmap, size_t bitmap_size_in_words, size_t bit_index, bool value, bool fail_if_already_set, bool fail_if_contended)
 {
     std::atomic<uint64_t>* word = nullptr;
     uint64_t mask;
     find_bit_word_and_mask(bitmap, bitmap_size_in_words, bit_index, word, mask);
-    return try_apply_mask_to_word(*word, mask, value, fail_if_already_set);
+    return try_apply_mask_to_word(*word, mask, value, fail_if_already_set, fail_if_contended);
 }
 
 static void safe_set_bit_range_value(

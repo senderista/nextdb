@@ -23,10 +23,6 @@ size_t safe_ts_entries_t::reserve_safe_ts_index()
             return safe_ts_entries_t::c_invalid_safe_ts_index;
         }
 
-        // If the CAS to set the bit fails, restart the scan, even if the bit
-        // was still unset when the CAS failed (a failed CAS indicates
-        // contention and we should back off by restarting the scan).
-        //
         // Restart the scan if the bit was already set when we tried to set it,
         // because that means that another thread has already reserved this
         // index. We force try_set_bit_value() to fail in this case by passing

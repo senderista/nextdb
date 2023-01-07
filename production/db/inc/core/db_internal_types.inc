@@ -137,12 +137,13 @@ log_offset_t logs_t::allocate_used_log_offset()
 
     // Try to set the first unset bit in the "allocated log offsets" bitmap.
     log_offset_t allocated_offset = c_invalid_log_offset;
+    size_t start_index = 0;
     while (true)
     {
         size_t first_unallocated_index = find_first_unset_bit(
             m_allocated_log_offsets_bitmap,
             std::size(m_allocated_log_offsets_bitmap),
-            0, first_unused_offset);
+            start_index, first_unused_offset);
 
         // If our scan doesn't find any unset bits, immediately return failure
         // rather than retrying the scan (otherwise this could lead to an
@@ -157,10 +158,6 @@ log_offset_t logs_t::allocate_used_log_offset()
                 && first_unallocated_index <= c_last_log_offset,
             "Index returned by find_first_unset_bit() is outside expected range!");
 
-        // If the CAS to set the bit fails, restart the scan, even if the bit
-        // was still unset when the CAS failed (a failed CAS indicates
-        // contention and we should back off by restarting the scan).
-        //
         // Restart the scan if the bit was already set when we tried to set it,
         // because that means that another thread has already allocated this
         // offset. We force try_set_bit_value() to fail in this case by passing
@@ -174,6 +171,9 @@ log_offset_t logs_t::allocate_used_log_offset()
             allocated_offset = static_cast<log_offset_t>(first_unallocated_index);
             break;
         }
+
+        // Start the next scan right after the index we unsuccessfully tried to allocate.
+        start_index = first_unallocated_index + 1;
     }
 
     return allocated_offset;
@@ -200,11 +200,6 @@ log_offset_t logs_t::allocate_unused_log_offset()
                 && next_offset <= c_last_log_offset,
             "next_offset is out of range!");
 
-        // If the CAS to set the bit fails, try the next available unused
-        // offset, even if the bit was still unset when the CAS failed (a failed
-        // CAS indicates contention and we should back off by restarting the
-        // scan).
-        //
         // Retry if the bit was already set when we tried to set it,
         // because that means that another thread has already allocated this
         // offset. We force try_set_bit_value() to fail in this case by passing

@@ -82,7 +82,7 @@ bool safe_ts_entries_t::reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, wat
     // Publication makes the reserved timestamp visible to all other threads (so
     // it will be observed by any scan that starts after publication).
     // Validation ensures that the reserving thread cannot use a timestamp that
-    // was published too late to avoid being overtaken by the pre-truncate
+    // was published too late to avoid being overtaken by the pre-reclaim
     // watermark.
     auto& entry = m_safe_ts_per_thread_entries[index];
     // Relaxed load is sufficient because this thread must observe its own writes.
@@ -98,7 +98,7 @@ bool safe_ts_entries_t::reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, wat
 
     // Validate that the new safe_ts does not lag the post-GC watermark
     // (equality is acceptable because the post-GC watermark is an inclusive
-    // upper bound on the pre-truncate watermark, and the pre-truncate watermark
+    // upper bound on the pre-reclaim watermark, and the pre-reclaim watermark
     // is an exclusive upper bound on the virtual address range eligible for
     // decommit).
     if (safe_ts < watermarks->get_watermark(watermark_type_t::post_gc))
@@ -118,7 +118,7 @@ void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
         "Expected this thread's safe_ts entry index to be valid!");
 
     // The entry for this thread should be valid and at least as large as the
-    // pre-truncate watermark (otherwise we either failed to retract the
+    // pre-reclaim watermark (otherwise we either failed to retract the
     // publication of a safe_ts that failed validation, or the scan algorithm is
     // incorrect).
     auto& entry = m_safe_ts_per_thread_entries[index];
@@ -128,12 +128,12 @@ void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
         current_value != c_invalid_gaia_txn_id,
         "Cannot release an invalid safe_ts entry!");
     ASSERT_PRECONDITION(
-        current_value >= watermarks->get_watermark(watermark_type_t::pre_truncate),
-        "A reserved safe_ts entry cannot lag the pre-truncate watermark!");
+        current_value >= watermarks->get_watermark(watermark_type_t::pre_reclaim),
+        "A reserved safe_ts entry cannot lag the pre-reclaim watermark!");
 
     // Invalidate the previously published entry.
     // REVIEW: This could be a relaxed store without loss of correctness, since
-    // it would only delay advancing the pre-truncate watermark.
+    // it would only delay advancing the pre-reclaim watermark.
     entry = c_invalid_gaia_txn_id;
 }
 
@@ -161,10 +161,10 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks
     // 3. Take the minimum of the "minimum observed published timestamp" and the
     //    pre-scan snapshot of the post-GC watermark, and return that as the
     //    "safe truncation timestamp". (Note that this timestamp may actually be
-    //    behind the current value of the pre-truncate watermark, but we won't
-    //    detect that until we fail to advance the pre-truncate watermark to
+    //    behind the current value of the pre-reclaim watermark, but we won't
+    //    detect that until we fail to advance the pre-reclaim watermark to
     //    this timestamp. Any published timestamp that is already behind the
-    //    pre-truncate watermark will fail validation.)
+    //    pre-reclaim watermark will fail validation.)
     //
     // REVIEW: Need to specify this algorithm in a model-checkable spec language
     // like TLA+.
@@ -172,7 +172,7 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks
     // Proof of correctness (very informal):
     //
     // We wish to show that after reserve_safe_ts(safe_ts) has returned success,
-    // the pre-truncate watermark can never exceed safe_ts.
+    // the pre-reclaim watermark can never exceed safe_ts.
     //
     // First, we need to show that get_safe_truncation_ts() cannot return a
     // timestamp greater than safe_ts. There are only two possible cases to
@@ -195,12 +195,12 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks
     //    well, and we are done.
     //
     // Given that safe_ts is an upper bound on the return value of
-    // get_safe_truncation_ts(), and the pre-truncate watermark can only be
+    // get_safe_truncation_ts(), and the pre-reclaim watermark can only be
     // advanced to a return value of get_safe_truncation_ts(), it follows that
-    // safe_ts is always an upper bound on the pre-truncate watermark. QED.
+    // safe_ts is always an upper bound on the pre-reclaim watermark. QED.
     //
     // Schematically:
-    // "pre-truncate watermark"
+    // "pre-reclaim watermark"
     // <= "pre-scan snapshot of post-GC watermark"
     // <= "publication-time value of post-GC watermark"
     // <= "validation-time snapshot of post-GC watermark"
@@ -221,11 +221,11 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks
     // the pre-scan snapshot of the post-GC watermark.
     //
     // Note that a published timestamp may have already fallen behind the
-    // current pre-truncate watermark (which will make it fail validation). In
-    // that case, we will return a timestamp older than the current pre-truncate
+    // current pre-reclaim watermark (which will make it fail validation). In
+    // that case, we will return a timestamp older than the current pre-reclaim
     // watermark. There is no need to try to prevent this, because
     // advance_watermark() will fail, the current GC task will abort, and
-    // another thread will try to advance the pre-truncate watermark.
+    // another thread will try to advance the pre-reclaim watermark.
     for (const auto& entry : m_safe_ts_per_thread_entries)
     {
         // This must be a seq_cst load in order to ensure that the scan observes

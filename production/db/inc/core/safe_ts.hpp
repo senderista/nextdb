@@ -43,7 +43,7 @@ public:
 
     // Reserves a "safe timestamp" that protects its own and all subsequent
     // metadata entries from memory reclamation, by ensuring that the
-    // pre-truncate watermark can never advance past it until release_safe_ts()
+    // pre-reclaim watermark can never advance past it until release_safe_ts()
     // is called on that timestamp.
     //
     // Any previously reserved "safe timestamp" value for this thread will be
@@ -57,7 +57,7 @@ public:
     inline bool reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, watermarks_t* watermarks);
 
     // Releases the "safe timestamp" previously reserved at the given index,
-    // allowing the pre-truncate watermark to advance past it, signaling to GC
+    // allowing the pre-reclaim watermark to advance past it, signaling to GC
     // tasks that the memory occupied by its metadata entry is eligible for
     // reclamation.
     //

@@ -141,11 +141,11 @@ private:
     // Returns true if contention was detected, false otherwise.
     static bool update_post_gc_watermark();
     // Returns true if contention was detected, false otherwise.
-    static bool update_pre_truncate_watermark(
-        gaia_txn_id_t& old_pre_truncate_watermark, gaia_txn_id_t& new_pre_truncate_watermark);
+    static bool update_pre_reclaim_watermark(
+        gaia_txn_id_t& old_pre_reclaim_watermark, gaia_txn_id_t& new_pre_reclaim_watermark);
 
-    // Truncates the txn table at the highest page boundary less than the pre-truncate watermark.
-    static void truncate_txn_table(gaia_txn_id_t old_pre_truncate_watermark, gaia_txn_id_t new_pre_truncate_watermark);
+    // Truncates the txn table at the highest page boundary less than the pre-reclaim watermark.
+    static void truncate_txn_table(gaia_txn_id_t old_pre_reclaim_watermark, gaia_txn_id_t new_pre_reclaim_watermark);
     // Returns the start address of the page containing the txn metadata entry for this timestamp.
     static char* get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts);
     // Returns the number of pages between the start page (inclusive) and end

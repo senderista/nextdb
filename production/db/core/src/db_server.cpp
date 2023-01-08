@@ -132,7 +132,7 @@ void server_t::init_txn_history()
     get_txn_metadata()->set_txn_durable(initial_commit_ts);
     // There was no log associated with the initial txn, so assume GC is complete.
     get_txn_metadata()->set_txn_gc_complete(initial_commit_ts);
-    // Finally, advance all watermarks (except the pre-truncate watermark) to
+    // Finally, advance all watermarks (except the pre-reclaim watermark) to
     // the initial commit_ts.
     get_watermarks()->advance_watermark(watermark_type_t::pre_apply, initial_commit_ts);
     get_watermarks()->advance_watermark(watermark_type_t::post_apply, initial_commit_ts);

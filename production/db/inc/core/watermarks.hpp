@@ -23,19 +23,19 @@ namespace db
 // eligible for GC. GC cannot be started for any committed txn until the
 // post-apply watermark has advanced to its commit_ts. The "post-GC"
 // watermark represents a lower bound on the latest commit_ts whose txn log
-// could have had GC reclaim all its resources. Finally, the "pre-truncate"
+// could have had GC reclaim all its resources. Finally, the "pre-reclaim"
 // watermark represents an (exclusive) upper bound on the timestamps whose
 // metadata entries could have had their memory reclaimed (e.g., via
 // zeroing, unmapping, or overwriting). Any timestamp whose metadata entry
 // could potentially be dereferenced must be "reserved" via the "safe_ts"
-// API to prevent the pre-truncate watermark from advancing past it and
+// API to prevent the pre-reclaim watermark from advancing past it and
 // allowing its metadata entry to be reclaimed.
 //
 // The pre-apply watermark must either be equal to the post-apply watermark or greater by 1.
 //
 // Schematically:
 //    commit timestamps of transactions whose metadata entries have been reclaimed
-//  < pre-truncate watermark
+//  < pre-reclaim watermark
 //    <= commit timestamps of transactions completely garbage-collected
 // <= post-GC watermark
 //    <= commit timestamps of transactions applied to shared view
@@ -49,7 +49,7 @@ enum class watermark_type_t
     pre_apply,
     post_apply,
     post_gc,
-    pre_truncate,
+    pre_reclaim,
     // This should always be last.
     count
 };

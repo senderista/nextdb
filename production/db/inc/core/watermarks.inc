@@ -9,7 +9,7 @@
 gaia_txn_id_t watermarks_t::get_watermark(watermark_type_t watermark_type, bool relaxed_load)
 {
     std::memory_order order = relaxed_load ? std::memory_order_relaxed : std::memory_order_seq_cst;
-    return m_watermarks[common::get_enum_value(watermark_type)].load(order);
+    return get_watermark_entry(watermark_type).load(order);
 }
 
 // This advances the given global timestamp counter to the given timestamp

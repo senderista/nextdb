@@ -92,7 +92,16 @@ private:
     // The only clients of the safe_ts API are expected to be session threads,
     // so we only allocate enough entries for the maximum allowed number of
     // session threads.
-    std::atomic<gaia_txn_id_t::value_type> m_safe_ts_per_thread_entries[c_session_limit]{};
+    //
+    // We pad each entry to 64 bytes (the width of a cache line) to prevent
+    // memory contention from false sharing.
+    struct element
+    {
+        alignas(c_cache_line_size_in_bytes)
+        std::atomic<gaia_txn_id_t::value_type> entry;
+    };
+
+    element m_safe_ts_per_thread_entries[c_session_limit]{};
 
     // The reserved status of each index into `m_safe_ts_per_thread_entries` is
     // tracked in this bitmap. Before calling any safe_ts API functions, each
@@ -100,6 +109,11 @@ private:
     // When it is no longer using the safe_ts API (e.g., at session exit), each
     // thread should clear the bit that it set.
     std::atomic<uint64_t> m_safe_ts_reserved_indexes_bitmap[c_session_limit / common::c_uint64_bit_count]{};
+
+    inline std::atomic<gaia_txn_id_t::value_type>& entry_at(size_t index)
+    {
+        return m_safe_ts_per_thread_entries[index].entry;
+    }
 
 public:
     static constexpr size_t c_invalid_safe_ts_index{std::numeric_limits<size_t>::max()};

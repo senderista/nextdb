@@ -56,7 +56,7 @@ void safe_ts_entries_t::release_safe_ts_index(size_t& index)
     // Invalidate this thread's safe_ts entry.
     // REVIEW: Should we expect the caller to do this beforehand and instead
     // assert that the entry is invalid?
-    m_safe_ts_per_thread_entries[index] = c_invalid_gaia_txn_id;
+    entry_at(index) = c_invalid_gaia_txn_id;
 
     // Invalidate the thread-local copy of this entry's index before marking its
     // index "free".
@@ -84,7 +84,7 @@ bool safe_ts_entries_t::reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, wat
     // Validation ensures that the reserving thread cannot use a timestamp that
     // was published too late to avoid being overtaken by the pre-truncate
     // watermark.
-    auto& entry = m_safe_ts_per_thread_entries[index];
+    auto& entry = entry_at(index);
     // Relaxed load is sufficient because this thread must observe its own writes.
     auto current_value = entry.load(std::memory_order_relaxed);
     ASSERT_PRECONDITION(
@@ -121,7 +121,7 @@ void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
     // pre-truncate watermark (otherwise we either failed to retract the
     // publication of a safe_ts that failed validation, or the scan algorithm is
     // incorrect).
-    auto& entry = m_safe_ts_per_thread_entries[index];
+    auto& entry = entry_at(index);
     // Relaxed load is sufficient because this thread must observe its own writes.
     auto current_value = entry.load(std::memory_order_relaxed);
     ASSERT_PRECONDITION(
@@ -144,7 +144,7 @@ gaia_txn_id_t safe_ts_entries_t::get_reserved_ts(size_t index)
         "Expected this thread's safe_ts entry index to be valid!");
 
     // Relaxed load is sufficient because this thread must observe its own writes.
-    return m_safe_ts_per_thread_entries[index].load(std::memory_order_relaxed);
+    return entry_at(index).load(std::memory_order_relaxed);
 }
 
 gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks)
@@ -226,11 +226,11 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks
     // watermark. There is no need to try to prevent this, because
     // advance_watermark() will fail, the current GC task will abort, and
     // another thread will try to advance the pre-truncate watermark.
-    for (const auto& entry : m_safe_ts_per_thread_entries)
+    for (const auto& element : m_safe_ts_per_thread_entries)
     {
         // This must be a seq_cst load in order to ensure that the scan observes
         // any safe_ts entry published before it started.
-        auto current_value = entry.load();
+        auto current_value = element.entry.load();
 
         // Skip invalid entries.
         if (current_value == c_invalid_gaia_txn_id)

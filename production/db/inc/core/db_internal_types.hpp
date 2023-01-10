@@ -408,11 +408,19 @@ struct counters_t
     // targeted by the intrinsics operate at the level of physical memory, not
     // virtual addresses.)
     //
-    // NB: All these fields are initialized to 0, even though C++ doesn't guarantee
-    // it, because this struct is constructed in a memory-mapped shared-memory
-    // segment, and the OS automatically zeroes new pages.
+    // NB: All these fields are initialized to 0, even though C++ doesn't
+    // guarantee it, because this struct is constructed in a memory-mapped
+    // shared-memory segment, and the OS automatically zeroes new pages.
+    //
+    // We pad all fields to 64 bytes (the width of a cache line) to prevent
+    // memory contention from false sharing.
+    alignas(c_cache_line_size_in_bytes)
     std::atomic<size_t> last_id;
+
+    alignas(c_cache_line_size_in_bytes)
     std::atomic<size_t> last_txn_id;
+
+    alignas(c_cache_line_size_in_bytes)
     std::atomic<size_t> last_locator;
 };
 

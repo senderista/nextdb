@@ -38,6 +38,9 @@ constexpr size_t c_chunk_size_in_bytes = 4 * 1024 * 1024;
 // startup).
 constexpr size_t c_page_size_in_bytes = 4096;
 
+// REVIEW: Could this be wrong for some ARM archs?
+constexpr size_t c_cache_line_size_in_bytes = 64;
+
 // For representing slot offsets within a chunk.
 // The total number of 64B slots in a 4MB chunk can be represented using a
 // 16-bit integer. A slot_offset_t value is just the low 16 bits of a 32-bit

@@ -59,9 +59,9 @@ class watermarks_t
 public:
     inline void clear()
     {
-        for (auto& entry : m_watermarks)
+        for (auto& element : m_watermarks)
         {
-            entry = {};
+            element.entry = {};
         }
     }
 
@@ -77,17 +77,25 @@ public:
     inline bool advance_watermark(watermark_type_t watermark_type, gaia_txn_id_t ts);
 
 private:
-    // Returns a reference to the array entry of the given watermark.
-    inline std::atomic<gaia_txn_id_t::value_type>& get_watermark_entry(watermark_type_t watermark_type)
-    {
-        return m_watermarks[common::get_enum_value(watermark_type)];
-    }
-
-private:
     // An array of monotonically nondecreasing timestamps, or "watermarks", that
     // represent the progress of system maintenance tasks with respect to txn
     // history. See `watermark_type_t` for a full explanation.
-    std::atomic<gaia_txn_id_t::value_type> m_watermarks[common::get_enum_value(watermark_type_t::count)];
+    //
+    // We pad each entry to 64 bytes (the width of a cache line) to prevent
+    // memory contention from false sharing.
+    struct element
+    {
+        alignas(c_cache_line_size_in_bytes)
+        std::atomic<gaia_txn_id_t::value_type> entry;
+    };
+    element m_watermarks[common::get_enum_value(watermark_type_t::count)];
+
+private:
+    // Returns a reference to the array entry of the given watermark.
+    inline std::atomic<gaia_txn_id_t::value_type>& get_watermark_entry(watermark_type_t watermark_type)
+    {
+        return m_watermarks[common::get_enum_value(watermark_type)].entry;
+    }
 };
 
 #include "watermarks.inc"

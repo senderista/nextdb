@@ -138,9 +138,19 @@ memory_allocation_error_internal::memory_allocation_error_internal()
     m_message = "The Gaia database ran out of memory.";
 }
 
-safe_ts_failure_internal::safe_ts_failure_internal()
+transaction_metadata_protection_failure_internal::transaction_metadata_protection_failure_internal()
 {
     m_message = "Failed to protect transaction metadata for the current thread.";
+}
+
+transaction_metadata_allocation_failure_internal::transaction_metadata_allocation_failure_internal()
+{
+    m_message = "Failed to allocate transaction metadata for the current thread.";
+}
+
+transaction_timestamp_allocation_failure_internal::transaction_timestamp_allocation_failure_internal()
+{
+    m_message = "Failed to allocate a transaction timestamp within the valid range.";
 }
 
 } // namespace db

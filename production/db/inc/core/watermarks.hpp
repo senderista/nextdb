@@ -76,7 +76,6 @@ public:
     // otherwise.
     inline bool advance_watermark(watermark_type_t watermark_type, gaia_txn_id_t ts);
 
-private:
     // Returns a reference to the array entry of the given watermark.
     inline std::atomic<gaia_txn_id_t::value_type>& get_watermark_entry(watermark_type_t watermark_type)
     {

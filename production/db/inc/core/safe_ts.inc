@@ -147,7 +147,7 @@ gaia_txn_id_t safe_ts_entries_t::get_reserved_ts(size_t index)
     return m_safe_ts_per_thread_entries[index].load(std::memory_order_relaxed);
 }
 
-gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks)
+gaia_txn_id_t safe_ts_entries_t::get_safe_reclamation_ts(watermarks_t* watermarks)
 {
     // The algorithm (loosely based on Maged Michael's "Hazard Pointers: Safe
     // Memory Reclamation for Lock-Free Objects"):
@@ -174,13 +174,13 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks
     // We wish to show that after reserve_safe_ts(safe_ts) has returned success,
     // the pre-reclaim watermark can never exceed safe_ts.
     //
-    // First, we need to show that get_safe_truncation_ts() cannot return a
+    // First, we need to show that get_safe_reclamation_ts() cannot return a
     // timestamp greater than safe_ts. There are only two possible cases to
     // consider: either (1) the scan of published timestamps observed safe_ts,
     // or (2) it did not.
     //
     // 1. If safe_ts was observed by the scan, then we know that it is an upper
-    //    bound on the return value of get_safe_truncation_ts(), so we are done.
+    //    bound on the return value of get_safe_reclamation_ts(), so we are done.
     //
     // 2. If safe_ts was not observed by the scan, then the pre-scan snapshot of
     //    the post-GC watermark must have been taken before the validation-time
@@ -191,12 +191,12 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_truncation_ts(watermarks_t* watermarks
     //    (because watermarks are monotonically nondecreasing) it must also be
     //    at least as large as the pre-scan snapshot of the post-GC watermark.
     //    Because the pre-scan snapshot of the post-GC watermark is an upper
-    //    bound on the return value of get_safe_truncation_ts(), safe_ts is as
+    //    bound on the return value of get_safe_reclamation_ts(), safe_ts is as
     //    well, and we are done.
     //
     // Given that safe_ts is an upper bound on the return value of
-    // get_safe_truncation_ts(), and the pre-reclaim watermark can only be
-    // advanced to a return value of get_safe_truncation_ts(), it follows that
+    // get_safe_reclamation_ts(), and the pre-reclaim watermark can only be
+    // advanced to a return value of get_safe_reclamation_ts(), it follows that
     // safe_ts is always an upper bound on the pre-reclaim watermark. QED.
     //
     // Schematically:

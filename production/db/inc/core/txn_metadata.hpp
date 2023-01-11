@@ -20,6 +20,7 @@
 
 #include "db_internal_types.hpp"
 #include "txn_metadata_entry.hpp"
+#include "watermarks.hpp"
 
 namespace gaia
 {
@@ -27,15 +28,6 @@ namespace db
 {
 namespace transactions
 {
-
-// The minimum value for the upper bound on unused pages that must exist
-// before we attempt to decommit unused pages in the txn metadata map.
-#ifdef TXN_METADATA_GC_IMMEDIATE
-constexpr size_t c_min_pages_to_free = 1;
-#else
-// This is based on empirical measurement.
-constexpr size_t c_min_pages_to_free = 8;
-#endif
 
 // This class encapsulates the txn metadata array. It handles all reads, writes,
 // and synchronization on the metadata array, but has no knowledge of the
@@ -79,15 +71,6 @@ public:
     // we know that its metadata entry has been successfully initialized.
     inline bool seal_uninitialized_ts(gaia_txn_id_t ts);
 
-    gaia_txn_id_t register_begin_ts();
-    gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t log_offset);
-
-    void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
-
-private:
-    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts, bool relaxed_load = false);
-    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store = false);
-
     // This wrapper over std::atomic::compare_exchange_strong() returns the
     // actual value of this txn_metadata_t instance when the method was called.
     // If the returned value is not equal to the expected value, then the CAS
@@ -96,7 +79,30 @@ private:
     inline txn_metadata_entry_t compare_exchange(gaia_txn_id_t ts,
         txn_metadata_entry_t expected_value, txn_metadata_entry_t desired_value);
 
+    // This uninitializes all entries from start_ts (inclusive) to end_ts (exclusive).
+    inline void uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
+
+    inline void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
+
+public:
+    // REVIEW: The smallest reasonable size is double the maximum number of logs
+    // (because update txns need both a begin_ts entry and a commit_ts entry).
+    static constexpr size_t c_num_entries{2 * (c_max_logs + 1)};
+
 private:
+    inline size_t ts_to_buffer_index(gaia_txn_id_t ts);
+    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts, bool relaxed_load = false);
+    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store = false);
+
+private:
+    // We need to alias the pre-reclaim watermark for both efficiency and
+    // correctness (a simple duplicate counter that was written after the
+    // watermark was updated could easily run backward under concurrency).
+    //
+    // We cache a pointer to this watermark instead of calling the
+    // get_watermarks() accessor, to avoid taking a dependency on client/server
+    // accessors for the shared-memory structures.
+    //
     // This is an effectively infinite array of timestamp entries, implemented
     // as a finite circular buffer, logically indexed by the txn timestamp
     // counter and containing metadata for every txn that has been submitted to
@@ -124,7 +130,14 @@ private:
     // if necessary up to 64 bits, if we replace linked timestamps in the
     // metadata word with relative offsets. If the circular buffer cannot exceed
     // 2^16 entries, the offsets could be restricted to 16 bits.
-    std::atomic<uint64_t> m_txn_metadata_map[txn_metadata_entry_t::get_max_ts_count() / c_session_limit];
+
+    std::atomic<uint64_t> m_txn_metadata_map[c_num_entries];
+
+    // For buffer indexing to work correctly (and efficiently) we need the
+    // buffer size to be a power of 2.
+    static_assert(
+        (c_num_entries & -c_num_entries) == c_num_entries,
+        "The txn metadata map buffer size must be a power of 2!");
 };
 
 #include "txn_metadata.inc"

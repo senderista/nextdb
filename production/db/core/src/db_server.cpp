@@ -37,6 +37,7 @@
 #include "db_helpers.hpp"
 #include "memory_helpers.hpp"
 #include "safe_ts.hpp"
+#include "txn_metadata.hpp"
 
 using namespace gaia::db;
 using namespace gaia::db::memory_manager;
@@ -90,7 +91,7 @@ void server_t::init_shared_memory()
     //
     // s_shared_type_index uses (8B) * c_max_locators = 32GB of virtual address space.
     //
-    // s_shared_txn_metadata uses (8B) * get_max_ts_count() = 32TB of virtual address space.
+    // s_shared_txn_metadata uses (8B) * txn_metadata_t::c_num_entries = 32TB of virtual address space.
     data_mapping_t::create(c_data_mappings, s_server_conf.instance_name().c_str());
 
     // The server currently doesn't use the memory manager or chunk manager, but
@@ -118,11 +119,11 @@ void server_t::init_shared_memory()
 void server_t::init_txn_history()
 {
     // Acquire a begin_ts and create a txn metadata entry for it.
-    gaia_txn_id_t initial_begin_ts = get_txn_metadata()->register_begin_ts();
+    gaia_txn_id_t initial_begin_ts = register_begin_ts();
     // Set begin_ts entry status to submitted.
     get_txn_metadata()->set_active_txn_submitted(initial_begin_ts);
     // Acquire a commit_ts for this begin_ts and create a txn metadata entry for it.
-    gaia_txn_id_t initial_commit_ts = get_txn_metadata()->register_commit_ts(initial_begin_ts, c_invalid_log_offset);
+    gaia_txn_id_t initial_commit_ts = register_commit_ts(initial_begin_ts, c_invalid_log_offset);
     // Set linked commit_ts in begin_ts entry.
     get_txn_metadata()->set_submitted_txn_commit_ts(initial_begin_ts, initial_commit_ts);
     // Set commit_ts entry status to committed.

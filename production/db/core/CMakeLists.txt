@@ -35,7 +35,6 @@ add_library(gaia_db_client STATIC
   src/gaia_ptr_api.cpp
   src/gaia_ptr.cpp
   src/memory_manager.cpp
-  src/txn_metadata.cpp
 )
 
 configure_gaia_target(gaia_db_client)
@@ -68,7 +67,6 @@ set(GAIA_DB_SERVER_SOURCES
   src/exceptions.cpp
   src/gaia_ptr.cpp
   src/memory_manager.cpp
-  src/txn_metadata.cpp
 )
 
 add_library(gaia_db_server ${GAIA_DB_SERVER_SOURCES})

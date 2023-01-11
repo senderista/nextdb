@@ -75,7 +75,7 @@ public:
     // that was reserved before this method was called. For safety, callers must
     // avoid accessing txn metadata older than a previously reserved "safe
     // timestamp".
-    inline gaia_txn_id_t get_safe_truncation_ts(watermarks_t* watermarks);
+    inline gaia_txn_id_t get_safe_reclamation_ts(watermarks_t* watermarks);
 
 private:
     // A global array in which each session thread publishes a "safe timestamp"

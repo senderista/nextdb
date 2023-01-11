@@ -25,6 +25,7 @@
 #include "db_shared_data.hpp"
 #include "memory_manager.hpp"
 #include "memory_types.hpp"
+#include "txn_metadata.hpp"
 
 namespace gaia
 {
@@ -37,11 +38,6 @@ inline void dump_system_stats()
     std::cerr << "All used logs: " << gaia::db::get_logs()->get_all_used_logs_count() << std::endl;
     std::cerr << "Used chunks: " << gaia::db::get_memory_manager()->get_used_chunks_count() << std::endl;
     std::cerr << "All used chunks: " << gaia::db::get_memory_manager()->get_all_used_chunks_count() << std::endl;
-    size_t txn_metadata_used_pages_count = ((
-        gaia::db::get_counters()->last_txn_id -
-        gaia::db::get_watermarks()->get_watermark(watermark_type_t::pre_reclaim)
-    ) * sizeof(transactions::txn_metadata_entry_t)) / c_page_size_in_bytes;
-    std::cerr << "Used txn metadata pages: " << txn_metadata_used_pages_count << std::endl;
 }
 
 inline common::gaia_id_t allocate_id()
@@ -56,14 +52,48 @@ inline common::gaia_id_t allocate_id()
     return static_cast<common::gaia_id_t>(new_id);
 }
 
+// This returns the smallest allocated timestamp that can be safely accessed.
+inline gaia_txn_id_t get_first_safe_allocated_ts()
+{
+    // This needs to be a seq_cst load because we assert on it for all txn
+    // metadata map accesses.
+    // The pre-reclaim watermark is an exclusive upper bound on the timestamp
+    // range that may have been reclaimed, so its value represents the first
+    // timestamp entry that is safe to access.
+    return get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
+}
+
+// This returns the largest unallocated timestamp that can be allocated
+// without overwriting entries that are possibly in use.
+inline gaia_txn_id_t get_last_safe_unallocated_ts()
+{
+    // A relaxed load is safe since it will always lag the current value.
+    // REVIEW: False positives could cause unnecessary asserts or unrecoverable
+    // exceptions to be thrown!
+    // bool relaxed_load = true;
+    // gaia_txn_id_t pre_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim, relaxed_load);
+    gaia_txn_id_t pre_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
+
+    // Timestamp allocation wraps around the buffer until it reaches the index
+    // corresponding to the pre-reclaim watermark, so we just add the buffer
+    // size to the watermark to get the last safe timestamp index.
+    // The pre-reclaim watermark is an exclusive upper bound on the timestamp
+    // range that may have been reclaimed, so we need to subtract 1.
+    return pre_reclaim_watermark_lower_bound + transactions::txn_metadata_t::c_num_entries - 1;
+}
+
 inline gaia_txn_id_t allocate_txn_id()
 {
     counters_t* counters = gaia::db::get_counters();
     auto new_txn_id = ++(counters->last_txn_id);
 
-    DEBUG_ASSERT_INVARIANT(
+    ASSERT_INVARIANT(
         new_txn_id < (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width),
-        "Transaction ID exceeds allowed range!");
+        "Transaction timestamp exceeds allowed range!");
+
+    ASSERT_INVARIANT(
+        new_txn_id <= get_last_safe_unallocated_ts(),
+        "Transaction timestamp entry must be allocated in unused memory!");
 
 #ifdef DUMP_STATS
     if (new_txn_id % c_dump_stats_timestamp_interval == 0)
@@ -71,6 +101,13 @@ inline gaia_txn_id_t allocate_txn_id()
         dump_system_stats();
     }
 #endif
+
+    // A timestamp entry could be concurrently sealed between allocation of the
+    // timestamp and reading the entry.
+    ASSERT_INVARIANT(
+        gaia::db::get_txn_metadata()->is_uninitialized_ts(new_txn_id) ||
+            gaia::db::get_txn_metadata()->is_sealed_ts(new_txn_id),
+        "Any newly allocated timestamp entry must be uninitialized or sealed!");
 
     return static_cast<gaia_txn_id_t>(new_txn_id);
 }
@@ -256,6 +293,108 @@ inline void release_txn_log_reference(log_offset_t log_offset, gaia_txn_id_t beg
 {
     txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
     txn_log->release_reference(begin_ts);
+}
+
+// This helper allocates a new begin_ts and initializes its metadata in the txn
+// table.
+inline gaia_txn_id_t register_begin_ts()
+{
+    // The newly allocated begin timestamp for the new txn.
+    gaia_txn_id_t begin_ts;
+
+    // Loop until we successfully install a newly allocated begin_ts in the txn
+    // table. (We're possibly racing another beginning or committing txn that
+    // could seal our begin_ts metadata entry before we install it.)
+    // Technically, there is no bound on the number of iterations until success,
+    // so this is not wait-free, but in practice conflicts should be very rare.
+    while (true)
+    {
+        // Allocate a new begin timestamp.
+        begin_ts = allocate_txn_id();
+
+        if (begin_ts >= (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width))
+        {
+            throw transaction_timestamp_allocation_failure_internal();
+        }
+
+        if (begin_ts > get_last_safe_unallocated_ts())
+        {
+            throw transaction_metadata_allocation_failure_internal();
+        }
+
+        // The txn metadata must be uninitialized (not sealed).
+        transactions::txn_metadata_entry_t expected_value{
+            transactions::txn_metadata_entry_t::uninitialized_value()};
+        transactions::txn_metadata_entry_t desired_value{
+            transactions::txn_metadata_entry_t::new_begin_ts_entry()};
+        transactions::txn_metadata_entry_t actual_value{
+            get_txn_metadata()->compare_exchange(begin_ts, expected_value, desired_value)};
+
+        if (actual_value == expected_value)
+        {
+            break;
+        }
+
+        // The CAS can only fail if it returns the "sealed" value.
+        ASSERT_INVARIANT(
+            actual_value == transactions::txn_metadata_entry_t::sealed_value(),
+            "A newly allocated timestamp cannot be concurrently initialized to any value except the sealed value!");
+    }
+
+    return begin_ts;
+}
+
+// This helper allocates a new commit_ts and initializes its metadata in the txn
+// table.
+inline gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t log_offset)
+{
+    ASSERT_PRECONDITION(
+        !get_txn_metadata()->is_uninitialized_ts(begin_ts),
+        transactions::c_message_uninitialized_timestamp);
+
+    // The newly allocated commit timestamp for the submitted txn.
+    gaia_txn_id_t commit_ts;
+
+    // Loop until we successfully install a newly allocated commit_ts in the txn
+    // table. (We're possibly racing another beginning or committing txn that
+    // could seal our commit_ts metadata entry before we install it.)
+    // Technically, there is no bound on the number of iterations until success,
+    // so this is not wait-free, but in practice conflicts should be very rare.
+    while (true)
+    {
+        // Allocate a new commit timestamp.
+        commit_ts = allocate_txn_id();
+
+        if (commit_ts >= (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width))
+        {
+            throw transaction_timestamp_allocation_failure_internal();
+        }
+
+        if (commit_ts > get_last_safe_unallocated_ts())
+        {
+            throw transaction_metadata_allocation_failure_internal();
+        }
+
+        // The txn metadata must be uninitialized (not sealed).
+        transactions::txn_metadata_entry_t expected_value{
+            transactions::txn_metadata_entry_t::uninitialized_value()};
+        transactions::txn_metadata_entry_t desired_value{
+            transactions::txn_metadata_entry_t::new_commit_ts_entry(begin_ts, log_offset)};
+        transactions::txn_metadata_entry_t actual_value{
+            get_txn_metadata()->compare_exchange(commit_ts, expected_value, desired_value)};
+
+        if (actual_value == expected_value)
+        {
+            break;
+        }
+
+        // The CAS can only fail if it returns the "sealed" value.
+        ASSERT_INVARIANT(
+            actual_value == transactions::txn_metadata_entry_t::sealed_value(),
+            "A newly allocated timestamp cannot be concurrently initialized to any value except the sealed value!");
+    }
+
+    return commit_ts;
 }
 
 } // namespace db

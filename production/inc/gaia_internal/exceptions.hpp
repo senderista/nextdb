@@ -131,10 +131,22 @@ public:
     explicit memory_allocation_error_internal();
 };
 
-class safe_ts_failure_internal : public safe_ts_failure
+class transaction_metadata_protection_failure_internal : public transaction_metadata_protection_failure
 {
 public:
-    explicit safe_ts_failure_internal();
+    explicit transaction_metadata_protection_failure_internal();
+};
+
+class transaction_metadata_allocation_failure_internal : public transaction_metadata_allocation_failure
+{
+public:
+    explicit transaction_metadata_allocation_failure_internal();
+};
+
+class transaction_timestamp_allocation_failure_internal : public transaction_timestamp_allocation_failure
+{
+public:
+    explicit transaction_timestamp_allocation_failure_internal();
 };
 
 } // namespace db

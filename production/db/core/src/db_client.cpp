@@ -192,7 +192,7 @@ void client_t::begin_session()
     s_session_context->safe_ts_entries_index = get_safe_ts_entries()->reserve_safe_ts_index();
     if (safe_ts_entries_index() == safe_ts_entries_t::c_invalid_safe_ts_index)
     {
-        throw safe_ts_failure_internal();
+        throw transaction_metadata_protection_failure_internal();
     }
     ASSERT_POSTCONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
         "safe_ts entries index should be in valid range!");
@@ -280,7 +280,7 @@ void client_t::begin_transaction()
     auto cleanup_txn_metadata_protection = make_scope_guard(unprotect_txn_metadata);
 
     // Allocate a new begin_ts for this txn and initialize its metadata in the txn table.
-    s_session_context->txn_context.txn_id = get_txn_metadata()->register_begin_ts();
+    s_session_context->txn_context.txn_id = register_begin_ts();
 
     // The begin_ts returned by register_begin_ts() should always be valid because it
     // retries if it is concurrently sealed.
@@ -502,7 +502,7 @@ void client_t::commit_transaction()
         // is not idempotent (we assert that it must be called directly after
         // calling protect_txn_metadata()).
         cleanup_txn_metadata_protection.dismiss();
-        contention_detected |= do_txn_metadata_maintenance();
+        contention_detected |= update_pre_reclaim_watermark();
         // If we detect contention, then back off for about 5us (empirically
         // determined to be the best interval).
         if (contention_detected)
@@ -784,7 +784,7 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
     get_txn_metadata()->set_active_txn_submitted(begin_ts);
 
     // Allocate a new commit_ts and initialize its metadata with our begin_ts and log offset.
-    gaia_txn_id_t commit_ts = get_txn_metadata()->register_commit_ts(begin_ts, log_offset);
+    gaia_txn_id_t commit_ts = register_commit_ts(begin_ts, log_offset);
 
     return commit_ts;
 }
@@ -995,34 +995,6 @@ bool client_t::do_txn_log_maintenance()
     // post-GC watermark in a single scan, because log application is strictly
     // sequential, while GC is sequentially initiated but concurrently executed.
     contention_detected |= update_post_gc_watermark();
-
-    return contention_detected;
-}
-
-// Calculate a "safe truncation timestamp", below which all virtual memory
-// containing txn metadata can be safely reclaimed, and attempt to advance the
-// pre-reclaim watermark to that timestamp. If we successfully advanced the
-// pre-reclaim watermark, then we calculate the number of pages between the
-// previous pre-reclaim watermark value and its new value; if this count
-// exceeds a threshold then we decommit all such pages using madvise(2). (It is
-// possible for multiple GC tasks to concurrently or repeatedly decommit the
-// same pages, but madvise(2) is idempotent and concurrency-safe.)
-//
-// Returns true if contention was detected, false otherwise.
-bool client_t::do_txn_metadata_maintenance()
-{
-    // Find a timestamp at which we can safely truncate the txn table and
-    // advance the pre-reclaim watermark to that timestamp.
-    gaia_txn_id_t old_pre_reclaim_watermark, new_pre_reclaim_watermark;
-    bool contention_detected = update_pre_reclaim_watermark(
-        old_pre_reclaim_watermark, new_pre_reclaim_watermark);
-
-    // If we advanced the pre-reclaim watermark, truncate the txn table at the
-    // highest page boundary less than the pre-reclaim watermark.
-    if (new_pre_reclaim_watermark.is_valid())
-    {
-        truncate_txn_table(old_pre_reclaim_watermark, new_pre_reclaim_watermark);
-    }
 
     return contention_detected;
 }
@@ -1407,8 +1379,7 @@ bool client_t::update_post_gc_watermark()
     return contention_detected;
 }
 
-bool client_t::update_pre_reclaim_watermark(
-    gaia_txn_id_t& old_pre_reclaim_watermark, gaia_txn_id_t& new_pre_reclaim_watermark)
+bool client_t::update_pre_reclaim_watermark()
 {
     ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
         "safe_ts entries index should be valid!");
@@ -1420,46 +1391,44 @@ bool client_t::update_pre_reclaim_watermark(
     auto reserved_ts = get_safe_ts_entries()->get_reserved_ts(safe_ts_entries_index());
     ASSERT_PRECONDITION(!reserved_ts.is_valid(), "Expected any reserved safe_ts to be released!");
 
-    // new_pre_reclaim_watermark is only valid if we advance the pre-reclaim watermark.
-    new_pre_reclaim_watermark = c_invalid_gaia_txn_id;
-
     // Get a snapshot of the pre-reclaim watermark before advancing it.
-    old_pre_reclaim_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
+    gaia_txn_id_t old_pre_reclaim_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
 
-    // Abort if the largest possible range of metadata that can be freed (from
-    // the last truncation boundary to the current post-GC watermark) does not
-    // exceed the minimum page threshold.
-    // Note that we do not free the page containing the new value of the
-    // pre-reclaim watermark, so we do not count that page toward the
-    // decommitted page count.
-    size_t pages_to_decommit_upper_bound = get_txn_metadata_page_count_from_ts_range(
-        old_pre_reclaim_watermark, get_watermarks()->get_watermark(watermark_type_t::post_gc));
-
-    if (pages_to_decommit_upper_bound < transactions::c_min_pages_to_free)
+    // The post-GC watermark is an upper bound on the pre-reclaim watermark, so
+    // don't bother computing a safe reclamation timestamp if they're equal.
+    gaia_txn_id_t post_gc_watermark = get_watermarks()->get_watermark(watermark_type_t::post_gc);
+    ASSERT_INVARIANT(
+        post_gc_watermark >= old_pre_reclaim_watermark,
+        "The post-GC watermark must be at least as recent as the pre-reclaim watermark!");
+    if (post_gc_watermark == old_pre_reclaim_watermark)
     {
         return false;
     }
 
-    // Compute a safe truncation timestamp.
-    new_pre_reclaim_watermark = get_safe_ts_entries()->get_safe_truncation_ts(get_watermarks());
+    // Compute a safe reclamation timestamp.
+    gaia_txn_id_t new_pre_reclaim_watermark = get_safe_ts_entries()->get_safe_reclamation_ts(get_watermarks());
 
-    // Abort if the safe truncation timestamp does not exceed the current
+    // Abort if the safe reclamation timestamp does not exceed the current
     // pre-reclaim watermark.
-    // NB: It is expected that the safe truncation timestamp can be behind
-    // the pre-reclaim watermark, because some published (but not yet
-    // validated) timestamps may have been behind the pre-reclaim watermark
-    // when they were published (and will later fail validation).
+    // NB: It is expected that the safe reclamation timestamp can be behind the
+    // pre-reclaim watermark, because some published (but not yet validated)
+    // timestamps may have been behind the pre-reclaim watermark when they were
+    // published (and will later fail validation).
     if (new_pre_reclaim_watermark <= old_pre_reclaim_watermark)
     {
-        new_pre_reclaim_watermark = c_invalid_gaia_txn_id;
         return false;
     }
+
+    // Before trying to advance the pre-reclaim watermark, zero out all memory
+    // between the old and new pre-reclaim watermark, so it is uninitialized on
+    // next use. We need to do this before advancing the watermark, because
+    // otherwise we could allocate a timestamp entry in the newly reclaimed
+    // region that had not been properly uninitialized.
+    get_txn_metadata()->uninitialize_ts_range(old_pre_reclaim_watermark, new_pre_reclaim_watermark);
 
     // Try to advance the pre-reclaim watermark.
     if (!get_watermarks()->advance_watermark(watermark_type_t::pre_reclaim, new_pre_reclaim_watermark))
     {
-        new_pre_reclaim_watermark = c_invalid_gaia_txn_id;
-
         // Abort if another thread has concurrently advanced the
         // pre-reclaim watermark, to avoid contention.
         ASSERT_INVARIANT(
@@ -1471,65 +1440,6 @@ bool client_t::update_pre_reclaim_watermark(
     }
 
     return false;
-}
-
-void client_t::truncate_txn_table(
-    gaia_txn_id_t old_pre_reclaim_watermark, gaia_txn_id_t new_pre_reclaim_watermark)
-{
-    // Truncate the txn table by decommitting its unused physical pages. Because
-    // this operation is concurrency-safe and idempotent, it can be done without
-    // mutual exclusion.
-    // REVIEW: This method could also be used to safely advance the "head"
-    // pointer if the txn table were implemented as a circular buffer.
-
-    // Calculate the number of pages between the old and new pre-reclaim
-    // watermark values.
-    // We never free the page in which the new pre-reclaim watermark resides,
-    // because in general it will contain in-use txn metadata entries (unless
-    // the pre-reclaim watermark is at the very last entry, but that special
-    // case is too rare to be worth handling). Therefore, we always need to free
-    // the page containing the previous value of the pre-reclaim watermark.
-    // Note that since we do not free the page containing the new value of the
-    // pre-reclaim watermark, we do not count that page toward the decommitted
-    // page count.
-    size_t pages_to_decommit_count = get_txn_metadata_page_count_from_ts_range(
-        old_pre_reclaim_watermark, new_pre_reclaim_watermark);
-
-    char* prev_page_start_address = get_txn_metadata_page_address_from_ts(old_pre_reclaim_watermark);
-
-    // MADV_FREE seems like the best fit for our needs, since it allows the OS
-    // to lazily reclaim decommitted pages. However, it returns EINVAL when used
-    // with MAP_SHARED, so we need to use MADV_REMOVE (which works with memfd
-    // objects). According to the manpage, madvise(MADV_REMOVE) is equivalent to
-    // fallocate(FALLOC_FL_PUNCH_HOLE).
-    if (-1 == ::madvise(prev_page_start_address, pages_to_decommit_count * c_page_size_in_bytes, MADV_REMOVE))
-    {
-        throw_system_error("madvise(MADV_REMOVE) failed!");
-    }
-}
-
-char* client_t::get_txn_metadata_page_address_from_ts(gaia_txn_id_t ts)
-{
-    char* txn_metadata_map_base_address = reinterpret_cast<char*>(get_txn_metadata());
-    size_t ts_entry_byte_offset = ts * sizeof(txn_metadata_entry_t);
-    size_t ts_entry_page_byte_offset = (ts_entry_byte_offset / c_page_size_in_bytes) * c_page_size_in_bytes;
-    char* ts_entry_page_address = txn_metadata_map_base_address + ts_entry_page_byte_offset;
-    return ts_entry_page_address;
-}
-
-size_t client_t::get_txn_metadata_page_count_from_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts)
-{
-    ASSERT_PRECONDITION(start_ts <= end_ts, "Start timestamp must be at least as large as end timestamp!");
-
-    char* start_page_start_address = get_txn_metadata_page_address_from_ts(start_ts);
-    char* end_page_start_address = get_txn_metadata_page_address_from_ts(end_ts);
-
-    // Check for overflow, just in case.
-    ASSERT_INVARIANT(
-        start_page_start_address <= end_page_start_address,
-        "The end timestamp entry must reside on the same or later page as the start timestamp entry!");
-
-    return (end_page_start_address - start_page_start_address) / c_page_size_in_bytes;
 }
 
 void client_t::apply_txn_log_from_ts(gaia_txn_id_t commit_ts)

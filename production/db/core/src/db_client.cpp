@@ -286,6 +286,19 @@ void client_t::begin_transaction()
     // retries if it is concurrently sealed.
     ASSERT_INVARIANT(txn_id().is_valid(), "Begin timestamp is invalid!");
 
+    // protect_txn_metadata() reserves a safe timestamp at a snapshot of the
+    // post-GC watermark, so if latest_applied_commit_ts_lower_bound is older
+    // than the current post-GC watermark, it may point to a reclaimed timestamp
+    // entry. OTOH, if latest_applied_commit_ts_lower_bound is at least as
+    // recent as the current post-GC watermark, it is guaranteed to be pointing
+    // to a valid entry (because the pre-reclaim watermark cannot advance past
+    // the post-GC watermark value that we previously reserved, and the post-GC
+    // watermark, like all watermarks, is monotonically nondecreasing).
+    if (latest_applied_commit_ts_lower_bound() < get_watermarks()->get_watermark(watermark_type_t::post_gc))
+    {
+        s_session_context->latest_applied_commit_ts_lower_bound = c_invalid_gaia_txn_id;
+    }
+
     // We use this flag to apply various single-thread optimizations.
     bool is_snapshot_window_empty = false;
     if (latest_applied_commit_ts_lower_bound().is_valid())

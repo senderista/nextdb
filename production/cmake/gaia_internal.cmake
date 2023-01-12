@@ -81,10 +81,10 @@ function(configure_gaia_target TARGET)
     # supported by clang.
     # NB: `-finstrument-functions` allows profiling inlined functions, while
     # `-pg` does not. `-fxray-instrument` works only on MacOS.
-    # REVIEW: Only `-pg` seems to avoid bus errors, so making that the default.
-    # (`-finstrument-functions` only seems to work for very short runtimes.)
-    target_compile_options(${TARGET} PRIVATE -pg)
-    # target_compile_options(${TARGET} PRIVATE -finstrument-functions)
+    # REVIEW: `-finstrument-functions` seems to trigger bus errors for all but
+    # very short runtimes, while `-pg` does not.
+    target_compile_options(${TARGET} PRIVATE -finstrument-functions)
+    # target_compile_options(${TARGET} PRIVATE -pg)
     # target_compile_options(${TARGET} PRIVATE -fxray-instrument)
   endif(ENABLE_PROFILING_SUPPORT)
 endfunction(configure_gaia_target)

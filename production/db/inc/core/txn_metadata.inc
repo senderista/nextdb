@@ -94,14 +94,6 @@ db::log_offset_t txn_metadata_t::get_txn_log_offset_from_ts(gaia_txn_id_t commit
     return get_entry(commit_ts).get_log_offset();
 }
 
-// This is designed for implementing "fences" that can guarantee no thread can
-// ever claim a timestamp, by marking that timestamp permanently sealed. Sealing
-// can only be performed on an "uninitialized" metadata entry, not on any valid
-// metadata entry. When a session thread beginning or committing a txn finds
-// that its begin_ts or commit_ts has been sealed upon initializing the metadata
-// entry for that timestamp, it simply allocates another timestamp and retries.
-// This is possible because we never publish a newly allocated timestamp until
-// we know that its metadata entry has been successfully initialized.
 bool txn_metadata_t::seal_uninitialized_ts(gaia_txn_id_t ts)
 {
     // If the metadata is not uninitialized, we can't seal it.
@@ -232,16 +224,30 @@ bool txn_metadata_t::set_txn_gc_complete(gaia_txn_id_t commit_ts)
     return (actual_value == expected_value);
 }
 
+size_t txn_metadata_t::ts_to_buffer_index(gaia_txn_id_t ts)
+{
+    // FIXME: We can't do this right now without introducing a circular
+    // dependency between txn_metadata.hpp and watermarks.hpp. Best solution
+    // might be to just absorb watermarks_t within txn_metadata_t.
+    // DEBUG_ASSERT_PRECONDITION(ts >= get_first_safe_allocated_ts(), "Timestamp
+    // metadata entry may have been reclaimed!");
+
+    // The size is guaranteed to be a power of 2, so we can do modulo reduction
+    // with bitwise operations.
+    constexpr uint64_t remainder_mask{txn_metadata_t::c_num_entries - 1};
+    return static_cast<size_t>(ts & remainder_mask);
+}
+
 txn_metadata_entry_t txn_metadata_t::get_entry(gaia_txn_id_t ts, bool relaxed_load)
 {
     std::memory_order order = relaxed_load ? std::memory_order_relaxed : std::memory_order_seq_cst;
-    return txn_metadata_entry_t{m_txn_metadata_map[ts].load(order)};
+    return txn_metadata_entry_t{m_txn_metadata_map[ts_to_buffer_index(ts)].load(order)};
 }
 
 void txn_metadata_t::set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store)
 {
     std::memory_order order = relaxed_store ? std::memory_order_relaxed : std::memory_order_seq_cst;
-    m_txn_metadata_map[ts].store(entry.get_word(), order);
+    m_txn_metadata_map[ts_to_buffer_index(ts)].store(entry.get_word(), order);
 }
 
 txn_metadata_entry_t txn_metadata_t::compare_exchange(gaia_txn_id_t ts,
@@ -252,8 +258,58 @@ txn_metadata_entry_t txn_metadata_t::compare_exchange(gaia_txn_id_t ts,
     // compare_exchange_strong() cannot spuriously fail, so if
     // actual_value == expected_value, then we know that
     // desired_value must have been stored at the address.
-    m_txn_metadata_map[ts].compare_exchange_strong(expected_word, desired_word);
+    m_txn_metadata_map[ts_to_buffer_index(ts)].compare_exchange_strong(expected_word, desired_word);
     // expected_word is passed by reference, and on exit holds the initial word at the address.
     txn_metadata_entry_t actual_value{expected_word};
     return actual_value;
+}
+
+void txn_metadata_t::uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts)
+{
+    // We could just call set_entry(uninitialized_value()) for the whole range,
+    // but that would be much less efficient than directly calling memset() on
+    // the underlying memory.
+    //
+    // This is a circular buffer, so the logical timestamp range could span up
+    // to two distinct physical entry ranges, one starting at the beginning of
+    // the buffer and one ending at the end of the buffer.
+    //
+    // REVIEW: Would this be easier if we used the double-mapping trick, so any
+    // logical range within the buffer capacity is equivalent to contiguous
+    // virtual memory?
+    //
+    // FIXME: For now we do the obvious but inefficient thing.
+    ASSERT_PRECONDITION(start_ts < end_ts, "The start timestamp must be larger than the end timestamp!");
+    for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
+    {
+        set_entry(ts, txn_metadata_entry_t::uninitialized_value());
+    }
+}
+
+void txn_metadata_t::dump_txn_metadata_at_ts(gaia_txn_id_t ts)
+{
+    std::cerr << get_entry(ts).dump_metadata();
+
+    if (is_commit_ts(ts))
+    {
+        gaia_txn_id_t begin_ts = get_begin_ts_from_commit_ts(ts);
+        std::cerr
+            << "Metadata for commit_ts `" << ts << "` metadata's begin_ts `"
+            << begin_ts << "`: " << std::endl
+            << get_entry(begin_ts).dump_metadata();
+    }
+
+    if (is_begin_ts(ts))
+    {
+        // A begin_ts may not have a linked commit_ts, either because it is not
+        // submitted or because it has not yet been updated with its commit_ts.
+        gaia_txn_id_t commit_ts = get_commit_ts_from_begin_ts(ts);
+        if (commit_ts.is_valid())
+        {
+            std::cerr
+                << "Metadata for begin_ts `" << ts << "` metadata's commit_ts `"
+                << commit_ts << "`: " << std::endl
+                << get_entry(commit_ts).dump_metadata();
+        }
+    }
 }

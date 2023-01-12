@@ -20,6 +20,7 @@
 
 #include "db_internal_types.hpp"
 #include "txn_metadata_entry.hpp"
+#include "watermarks.hpp"
 
 namespace gaia
 {
@@ -27,15 +28,6 @@ namespace db
 {
 namespace transactions
 {
-
-// The minimum value for the upper bound on unused pages that must exist
-// before we attempt to decommit unused pages in the txn metadata map.
-#ifdef TXN_METADATA_GC_IMMEDIATE
-constexpr size_t c_min_pages_to_free = 1;
-#else
-// This is based on empirical measurement.
-constexpr size_t c_min_pages_to_free = 8;
-#endif
 
 // This class encapsulates the txn metadata array. It handles all reads, writes,
 // and synchronization on the metadata array, but has no knowledge of the
@@ -79,15 +71,6 @@ public:
     // we know that its metadata entry has been successfully initialized.
     inline bool seal_uninitialized_ts(gaia_txn_id_t ts);
 
-    gaia_txn_id_t register_begin_ts();
-    gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t log_offset);
-
-    void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
-
-private:
-    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts, bool relaxed_load = false);
-    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store = false);
-
     // This wrapper over std::atomic::compare_exchange_strong() returns the
     // actual value of this txn_metadata_t instance when the method was called.
     // If the returned value is not equal to the expected value, then the CAS
@@ -96,10 +79,35 @@ private:
     inline txn_metadata_entry_t compare_exchange(gaia_txn_id_t ts,
         txn_metadata_entry_t expected_value, txn_metadata_entry_t desired_value);
 
+    // This uninitializes all entries from start_ts (inclusive) to end_ts (exclusive).
+    inline void uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
+
+    inline void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
+
+public:
+    // REVIEW: The smallest reasonable size is double the maximum number of logs
+    // (because update txns need both a begin_ts entry and a commit_ts entry).
+    static constexpr size_t c_num_entries{2 * (c_max_logs + 1)};
+
 private:
-    // This is an effectively infinite array of timestamp entries, indexed by
-    // the txn timestamp counter and containing metadata for every txn that has
-    // been submitted to the system.
+    inline size_t ts_to_buffer_index(gaia_txn_id_t ts);
+    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts, bool relaxed_load = false);
+    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store = false);
+
+private:
+    // We need to alias the pre-reclaim watermark for both efficiency and
+    // correctness (a simple duplicate counter that was written after the
+    // watermark was updated could easily run backward under concurrency).
+    //
+    // We cache a pointer to this watermark instead of calling the
+    // get_watermarks() accessor, to avoid taking a dependency on client/server
+    // accessors for the shared-memory structures.
+    //
+    // This is an effectively infinite array of timestamp entries, implemented
+    // as a finite circular buffer, logically indexed by the txn timestamp
+    // counter and containing metadata for every txn that has been submitted to
+    // the system. When a prefix of timestamp entries falls behind the
+    // pre-reclaim watermark, it can be overwritten with new entries.
     //
     // Entries may be "uninitialized", "sealed" (i.e., initialized with a
     // special "junk" value and forbidden to be used afterward), or initialized
@@ -118,35 +126,18 @@ private:
     // between any threads that read or write the same txn metadata. Any writes
     // to entries that may be written by multiple threads use CAS operations.
     //
-    // The array's memory is managed via mmap(MAP_NORESERVE). We reserve 32TB of
-    // virtual address space (1/8 of the total virtual address space available
-    // to the process), but allocate physical pages only on first access. When a
-    // range of timestamp entries falls behind the watermark, its physical pages
-    // can be decommitted via madvise(MADV_DONTNEED).
-    //
-    // REVIEW: Because we reserve 2^45 bytes of virtual address space and each
-    // array entry is 8 bytes, we can address the whole range using 2^42
-    // timestamps. If we allocate 2^10 timestamps/second, we will use up all our
-    // timestamps in 2^32 seconds, or about 2^7 years. If we allocate 2^20
-    // timestamps/second, we will use up all our timestamps in 2^22 seconds, or
-    // about a month and a half. If this is an issue, then we could treat the
-    // array as a circular buffer, using a separate wraparound counter to
-    // calculate the array offset from a timestamp, and we can use the 3
-    // reserved bits in the txn metadata to extend our range by a factor of 8,
-    // so we could allocate 2^20 timestamps/second for a full year. If we need a
-    // still larger timestamp range (say 64-bit timestamps, with wraparound), we
-    // could just store the difference between a commit timestamp and its txn's
-    // begin timestamp, which should be possible to bound to no more than half
-    // the bits we use for the full timestamp, so we would still need only 32
-    // bits for a timestamp reference in the timestamp metadata. (We could store
-    // the array offset instead, but that would be dangerous when we approach
-    // wraparound.)
-    //
-    // FIXME: To prevent test failures when multiple sessions are opened in the
-    // same process, we restrict timestamps to a much smaller range (2^35) than
-    // would be suitable for production. This will be fixed when we transition
-    // the txn metadata array to a ring buffer.
-    std::atomic<uint64_t> m_txn_metadata_map[txn_metadata_entry_t::get_max_ts_count() / c_session_limit];
+    // REVIEW: We currently limit timestamps to 42 bits, but could extend them
+    // if necessary up to 64 bits, if we replace linked timestamps in the
+    // metadata word with relative offsets. If the circular buffer cannot exceed
+    // 2^16 entries, the offsets could be restricted to 16 bits.
+
+    std::atomic<uint64_t> m_txn_metadata_map[c_num_entries];
+
+    // For buffer indexing to work correctly (and efficiently) we need the
+    // buffer size to be a power of 2.
+    static_assert(
+        (c_num_entries & -c_num_entries) == c_num_entries,
+        "The txn metadata map buffer size must be a power of 2!");
 };
 
 #include "txn_metadata.inc"

@@ -54,9 +54,6 @@ public:
 
     inline uint64_t get_word();
 
-    static inline void check_ts_size(gaia_txn_id_t ts);
-    static inline constexpr size_t get_max_ts_count();
-
     static inline txn_metadata_entry_t uninitialized_value();
     static inline txn_metadata_entry_t sealed_value();
     static inline txn_metadata_entry_t new_begin_ts_entry();
@@ -209,19 +206,7 @@ public:
     // resources, and also increases txn begin latency, although it doesn't
     // affect read/write latency, because we don't use version chains).
 
-#if __has_feature(thread_sanitizer)
-    // We use 32-bit timestamps in TSan builds (and therefore 32GB rather than
-    // 32TB for the txn metadata segment), because TSan can't handle huge VM
-    // reservations. Per the above estimates, this would allow the server to run
-    // for 2-3 days at 10K TPS. This shouldn't be a concern for TSan builds,
-    // which are not intended for production.
-    //
-    // REVIEW: We should be able to revert this restriction when we move the txn
-    // metadata to a fixed-size circular buffer.
-    static constexpr size_t c_txn_ts_bit_width{32};
-#else
     static constexpr size_t c_txn_ts_bit_width{42};
-#endif
     static constexpr size_t c_txn_ts_shift{0};
     static constexpr uint64_t c_txn_ts_mask{((1UL << c_txn_ts_bit_width) - 1) << c_txn_ts_shift};
 

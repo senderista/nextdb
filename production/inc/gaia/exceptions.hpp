@@ -195,7 +195,21 @@ class memory_allocation_error : public common::gaia_exception
 /**
  * @brief Failed to protect transaction metadata for the current thread.
  */
-class safe_ts_failure : public common::gaia_exception
+class transaction_metadata_protection_failure : public common::gaia_exception
+{
+};
+
+/**
+ * @brief Failed to allocate transaction metadata for the current thread.
+ */
+class transaction_metadata_allocation_failure : public common::gaia_exception
+{
+};
+
+/**
+ * @brief Failed to allocate a transaction timestamp within the valid range.
+ */
+class transaction_timestamp_allocation_failure : public common::gaia_exception
 {
 };
 

@@ -155,6 +155,10 @@ private:
     static void protect_txn_metadata();
     static void unprotect_txn_metadata();
 
+    // Returns true if the given timestamp is protected from reclamation, false
+    // otherwise.
+    static bool is_protected_ts(gaia_txn_id_t ts);
+
     // Asserts that the watermark is protected by a reserved safe_ts.
     static gaia_txn_id_t get_safe_watermark(watermark_type_t watermark_type);
 };

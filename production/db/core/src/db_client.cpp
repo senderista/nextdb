@@ -621,6 +621,9 @@ void client_t::init_memory_manager()
 
 void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts)
 {
+    // Ensure that start_ts is protected from reclamation.
+    ASSERT_PRECONDITION(is_protected_ts(start_ts), "start_ts is unprotected from reclamation!");
+
     // Scan txn table entries from start_ts to end_ts.
     // Seal any uninitialized entries and validate any undecided txns.
     for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
@@ -650,6 +653,9 @@ bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_
     ASSERT_PRECONDITION(
         txn_ids_with_log_offsets.empty(),
         "Vector passed in to get_txn_log_offsets_in_range() should be empty!");
+
+    // Ensure that start_ts is protected from reclamation.
+    ASSERT_PRECONDITION(is_protected_ts(start_ts), "start_ts is unprotected from reclamation!");
 
     // This is just for asserting an invariant.
     bool acquired_first_log_ref = false;
@@ -706,6 +712,9 @@ void client_t::get_txn_log_offsets_for_snapshot(gaia_txn_id_t begin_ts,
     ASSERT_PRECONDITION(
         txn_ids_with_log_offsets.empty(),
         "Vector passed in to get_txn_log_offsets_for_snapshot() should be empty!");
+
+    // Ensure that begin_ts is protected from reclamation.
+    ASSERT_PRECONDITION(is_protected_ts(begin_ts), "begin_ts is unprotected from reclamation!");
 
     // Take a snapshot of the post-apply watermark and scan backward from
     // begin_ts, stopping either just before the saved watermark or at the first
@@ -1685,6 +1694,14 @@ void client_t::unprotect_txn_metadata()
     ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
 
     get_safe_ts_entries()->release_safe_ts(safe_ts_entries_index(), get_watermarks());
+}
+
+bool client_t::is_protected_ts(gaia_txn_id_t ts)
+{
+    auto reserved_ts = get_safe_ts_entries()->get_reserved_ts(safe_ts_entries_index());
+    ASSERT_PRECONDITION(reserved_ts.is_valid(), "Expected valid safe_ts to be reserved!");
+
+    return (reserved_ts <= ts);
 }
 
 gaia_txn_id_t client_t::get_safe_watermark(watermark_type_t watermark_type)

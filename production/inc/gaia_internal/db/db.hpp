@@ -55,5 +55,9 @@ constexpr size_t c_contention_backoff_us{5};
 // Timestamp interval between dumping system statistics to console.
 constexpr size_t c_dump_stats_timestamp_interval{1UL << 20};
 
+// The number of timestamp entries by which the pre-reclaim watermark can lag the
+// post-GC watermark before we attempt to advance the pre-reclaim watermark.
+constexpr size_t c_txn_metadata_reclaim_threshold{64};
+
 } // namespace db
 } // namespace gaia

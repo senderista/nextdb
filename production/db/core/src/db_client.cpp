@@ -1422,7 +1422,7 @@ bool client_t::update_pre_reclaim_watermark()
     ASSERT_INVARIANT(
         post_gc_watermark >= old_pre_reclaim_watermark,
         "The post-GC watermark must be at least as recent as the pre-reclaim watermark!");
-    if (post_gc_watermark == old_pre_reclaim_watermark)
+    if (post_gc_watermark - old_pre_reclaim_watermark < c_txn_metadata_reclaim_threshold)
     {
         return false;
     }

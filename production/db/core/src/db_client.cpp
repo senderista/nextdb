@@ -1025,13 +1025,12 @@ bool client_t::apply_txn_logs_to_shared_view()
 {
     bool contention_detected = false;
 
-    // First get a snapshot of the timestamp counter for an upper bound on
-    // the scan (we don't know yet if this is a begin_ts or commit_ts).
-    gaia_txn_id_t last_allocated_ts = get_last_txn_id();
-
-    // Now get a snapshot of the pre-apply watermark,
-    // for a lower bound on the scan.
+    // Get a snapshot of the pre-apply watermark, for a lower bound on the scan.
     auto pre_apply_watermark = get_safe_watermark(watermark_type_t::pre_apply);
+
+    // Get a snapshot of the timestamp counter, for an upper bound on the scan
+    // (we don't know yet if this is a begin_ts or commit_ts).
+    auto last_allocated_ts = get_last_txn_id();
 
     // Scan from the saved pre-apply watermark to the last known timestamp,
     // and apply all committed txn logs from the longest prefix of decided
@@ -1180,11 +1179,11 @@ bool client_t::gc_applied_txn_logs()
     // Ensure we clean up our cached chunk IDs when we exit this task.
     auto cleanup_fd = make_scope_guard([&] { map_gc_chunks_to_versions().clear(); });
 
-    // Get a snapshot of the post-apply watermark, for an upper bound on the scan.
-    auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
-
     // Get a snapshot of the post-GC watermark, for a lower bound on the scan.
     auto post_gc_watermark = get_safe_watermark(watermark_type_t::post_gc);
+
+    // Get a snapshot of the post-apply watermark, for an upper bound on the scan.
+    auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
 
     // Scan from the post-GC watermark to the post-apply watermark, executing GC
     // on any commit_ts if the txn log is valid (and the durable flag is set if
@@ -1321,11 +1320,11 @@ bool client_t::update_post_gc_watermark()
 {
     bool contention_detected = false;
 
-    // Get a snapshot of the post-apply watermark, for an upper bound on the scan.
-    auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
-
     // Get a snapshot of the post-GC watermark, for a lower bound on the scan.
     auto post_gc_watermark = get_safe_watermark(watermark_type_t::post_gc);
+
+    // Get a snapshot of the post-apply watermark, for an upper bound on the scan.
+    auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
 
     // Scan from the post-GC watermark to the post-apply watermark, advancing
     // the post-GC watermark to any commit_ts marked TXN_GC_COMPLETE, or to any

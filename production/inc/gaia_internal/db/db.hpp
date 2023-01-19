@@ -52,6 +52,10 @@ constexpr uint64_t c_session_magic{0xcafebabedecafbad};
 // This should be comparable to (or less than) context switch latency (~5us).
 constexpr size_t c_contention_backoff_us{5};
 
+// Time to spend backing off in a spin loop before remapping the global snapshot.
+// 90us was empirically determined to maximize throughput.
+constexpr size_t c_remap_backoff_us{90};
+
 // Timestamp interval between dumping system statistics to console.
 constexpr size_t c_dump_stats_timestamp_interval{1UL << 20};
 

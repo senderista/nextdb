@@ -335,17 +335,21 @@ void client_t::begin_transaction()
 
     if (!can_reuse_snapshot)
     {
+        // Back off to minimize mmap/munmap contention.
+        spin_wait(c_remap_backoff_us * c_pause_iterations_per_us);
+
         // Map a new private COW view of the locator shared memory segment.
         private_locators().close();
         bool manage_fd = false;
         bool is_shared = false;
+        private_locators().open(s_session_context->fd_locators, manage_fd, is_shared);
+
         // A snapshot of the post-apply watermark taken before mapping the
         // global snapshot is a lower bound on the latest commit_ts applied to
         // the global snapshot before it was mapped.
         auto latest_applied_commit_ts_lower_bound = get_watermarks()->get_watermark(watermark_type_t::post_apply);
         ASSERT_INVARIANT(txn_id() > latest_applied_commit_ts_lower_bound,
             "The post-apply watermark cannot advance to an active begin_ts!");
-        private_locators().open(s_session_context->fd_locators, manage_fd, is_shared);
         s_session_context->latest_applied_commit_ts_lower_bound = latest_applied_commit_ts_lower_bound;
 
         // Get all txn logs that might need to be applied to the new snapshot.

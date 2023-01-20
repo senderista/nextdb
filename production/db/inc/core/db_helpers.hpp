@@ -203,7 +203,8 @@ inline db_object_t* id_to_ptr(common::gaia_id_t id)
 inline gaia_txn_id_t get_last_txn_id()
 {
     counters_t* counters = gaia::db::get_counters();
-    return static_cast<gaia_txn_id_t>(counters->last_txn_id);
+    // A relaxed load is sufficient because stale values are acceptable.
+    return static_cast<gaia_txn_id_t>(counters->last_txn_id.load(std::memory_order_relaxed));
 }
 
 inline void apply_log_to_locators(locators_t* locators, txn_log_t* txn_log,

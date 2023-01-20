@@ -309,8 +309,10 @@ void client_t::begin_transaction()
     // Ensure that there are no undecided txns in our snapshot window.
     if (!is_snapshot_window_empty)
     {
-        auto pre_apply_watermark = get_safe_watermark(watermark_type_t::pre_apply);
-        validate_txns_in_range(pre_apply_watermark + 1, txn_id());
+        auto last_known_committed_ts = std::max(
+            latest_applied_commit_ts_lower_bound(),
+            get_safe_watermark(watermark_type_t::pre_apply));
+        validate_txns_in_range(last_known_committed_ts + 1, txn_id());
     }
 
     // Allocate new txn log.

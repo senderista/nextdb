@@ -634,21 +634,29 @@ void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_
     // Seal any uninitialized entries and validate any undecided txns.
     for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
     {
+        txn_metadata_entry_t ts_entry = get_txn_metadata()->get_entry(ts);
+
         // Fence off any txns that have allocated a commit_ts between start_ts
         // and end_ts but have not yet registered a commit_ts metadata entry in
         // the txn table.
-        if (get_txn_metadata()->seal_uninitialized_ts(ts))
+        if (ts_entry.is_uninitialized())
         {
-            continue;
+            if (!get_txn_metadata()->seal_uninitialized_ts(ts))
+            {
+                // If the CAS failed, then the entry has been initialized since
+                // we read it, so reload it.
+                ts_entry = get_txn_metadata()->get_entry(ts);
+            }
         }
 
         // Validate any undecided submitted txns.
-        if (get_txn_metadata()->is_commit_ts(ts) && get_txn_metadata()->is_txn_validating(ts))
+        if (ts_entry.is_commit_ts_entry() && ts_entry.is_validating())
         {
             // Spin briefly to give other threads a chance to validate this txn.
             // 2us was empirically determined to maximize throughput.
             spin_wait(2 * c_pause_iterations_per_us);
 
+            // We must read the latest value of the entry.
             if (get_txn_metadata()->is_txn_validating(ts))
             {
                 bool is_committed = validate_txn(ts);
@@ -675,14 +683,21 @@ bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_
 
     for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
     {
-        if (get_txn_metadata()->is_commit_ts(ts))
+        txn_metadata_entry_t ts_entry = get_txn_metadata()->get_entry(ts);
+
+        ASSERT_INVARIANT(
+            !ts_entry.is_uninitialized(),
+            "All entries are expected to be initialized or sealed!");
+
+        if (ts_entry.is_commit_ts_entry())
         {
             ASSERT_INVARIANT(
-                get_txn_metadata()->is_txn_decided(ts),
-                "Undecided commit_ts found in snapshot window!");
-            if (get_txn_metadata()->is_txn_committed(ts))
+                ts_entry.is_decided(),
+                "All commit_ts entries are expected to be decided!");
+
+            if (ts_entry.is_committed())
             {
-                gaia_txn_id_t txn_id = get_txn_metadata()->get_begin_ts_from_commit_ts(ts);
+                gaia_txn_id_t txn_id = ts_entry.get_timestamp();
 
                 // Because the watermark could advance past its saved value, we
                 // need to be sure that we don't send a commit_ts with a
@@ -692,7 +707,7 @@ bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_
                 // begin timestamp, and we verify the timestamp hasn't changed
                 // when we increment the reference count, so we will never try
                 // to apply a reused txn log.
-                log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(ts);
+                log_offset_t log_offset = ts_entry.get_log_offset();
                 txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
                 bool acquire_ref_succeeded = txn_log->acquire_reference(txn_id);
 
@@ -736,14 +751,17 @@ void client_t::get_txn_log_offsets_for_snapshot(gaia_txn_id_t begin_ts,
     auto post_apply_watermark = get_safe_watermark(watermark_type_t::post_apply);
     for (gaia_txn_id_t ts = begin_ts - 1; ts > post_apply_watermark; --ts)
     {
-        if (get_txn_metadata()->is_commit_ts(ts))
+        txn_metadata_entry_t ts_entry = get_txn_metadata()->get_entry(ts);
+
+        if (ts_entry.is_commit_ts_entry())
         {
             ASSERT_INVARIANT(
-                get_txn_metadata()->is_txn_decided(ts),
+                ts_entry.is_decided(),
                 "Undecided commit_ts found in snapshot window!");
-            if (get_txn_metadata()->is_txn_committed(ts))
+
+            if (ts_entry.is_committed())
             {
-                gaia_txn_id_t txn_id = get_txn_metadata()->get_begin_ts_from_commit_ts(ts);
+                gaia_txn_id_t txn_id = ts_entry.get_timestamp();
 
                 // Because the watermark could advance past its saved value, we
                 // need to be sure that we don't send a commit_ts with a
@@ -753,7 +771,7 @@ void client_t::get_txn_log_offsets_for_snapshot(gaia_txn_id_t begin_ts,
                 // begin timestamp, and we verify the timestamp hasn't changed
                 // when we increment the reference count, so we will never try
                 // to apply a reused txn log.
-                log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(ts);
+                log_offset_t log_offset = ts_entry.get_log_offset();
                 txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
                 if (txn_log->acquire_reference(txn_id))
                 {
@@ -828,6 +846,9 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 {
     gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
 
+    // Ensure that begin_ts is protected from reclamation.
+    ASSERT_PRECONDITION(is_protected_ts(begin_ts), "begin_ts is unprotected from reclamation!");
+
     // We defer setting the commit_ts in the begin_ts entry until validation, so
     // that validating threads don't have to wait for the committing session
     // thread to set it, and to ensure that any validated txn has it set.
@@ -869,21 +890,28 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
     // and test all committed txns for conflicts with the committing txn.
     for (gaia_txn_id_t ts = begin_ts + 1; ts < commit_ts; ++ts)
     {
+        txn_metadata_entry_t ts_entry = get_txn_metadata()->get_entry(ts);
+
         // Sealing all uninitialized entries within the conflict window marks a
         // "fence" after which any submitted txns which have acquired commit
         // timestamps in the conflict window must already have stored commit_ts
         // entries at that timestamp (they must retry with a new timestamp
         // otherwise).
-        if (get_txn_metadata()->seal_uninitialized_ts(ts))
+        if (ts_entry.is_uninitialized())
         {
-            continue;
+            if (!get_txn_metadata()->seal_uninitialized_ts(ts))
+            {
+                // If the CAS failed, then the entry has been initialized since
+                // we read it, so reload it.
+                ts_entry = get_txn_metadata()->get_entry(ts);
+            }
         }
 
         // Validate each undecided txn, and then test committed txns for conflicts.
-        if (get_txn_metadata()->is_commit_ts(ts))
+        if (ts_entry.is_commit_ts_entry())
         {
             // If this txn is undecided, validate it.
-            if (get_txn_metadata()->is_txn_validating(ts))
+            if (ts_entry.is_validating())
             {
                 // By hypothesis, there are no undecided txns with commit timestamps
                 // preceding the committing txn's begin timestamp.
@@ -895,6 +923,7 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                 // 0.5us was empirically determined to maximize throughput.
                 spin_wait(c_pause_iterations_per_us / 2);
 
+                // We must read the latest value of the entry.
                 if (get_txn_metadata()->is_txn_validating(ts))
                 {
                     // Recursively validate the current undecided txn.
@@ -903,10 +932,19 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                     // Update the current txn's decided status.
                     get_txn_metadata()->update_txn_decision(ts, is_committed);
                 }
+
+                // This commit_ts has been decided since we read its entry, so
+                // reload its entry.
+                ts_entry = get_txn_metadata()->get_entry(ts);
             }
 
+            // This commit_ts must now be decided, and the entry must reflect that.
+            ASSERT_INVARIANT(
+                ts_entry.is_decided(),
+                "Any undecided txn must be decided after validation!");
+
             // If the validated txn is committed, test it for conflicts.
-            if (get_txn_metadata()->is_txn_committed(ts))
+            if (ts_entry.is_committed())
             {
                 // We need to acquire references on both txn logs being tested for
                 // conflicts, in case either txn log is invalidated by another

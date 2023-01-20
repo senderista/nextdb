@@ -71,6 +71,12 @@ public:
     // we know that its metadata entry has been successfully initialized.
     inline bool seal_uninitialized_ts(gaia_txn_id_t ts);
 
+    // Returns the txn metadata entry at the given timestamp.
+    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts, bool relaxed_load = false);
+
+    // Sets the given txn metadata entry at the given timestamp.
+    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store = false);
+
     // This wrapper over std::atomic::compare_exchange_strong() returns the
     // actual value of this txn_metadata_t instance when the method was called.
     // If the returned value is not equal to the expected value, then the CAS
@@ -91,8 +97,6 @@ public:
 
 private:
     inline size_t ts_to_buffer_index(gaia_txn_id_t ts);
-    inline txn_metadata_entry_t get_entry(gaia_txn_id_t ts, bool relaxed_load = false);
-    inline void set_entry(gaia_txn_id_t ts, txn_metadata_entry_t entry, bool relaxed_store = false);
 
 private:
     // We need to alias the pre-reclaim watermark for both efficiency and

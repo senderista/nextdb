@@ -44,10 +44,7 @@ public:
     }
 
     txn_metadata_entry_t(const txn_metadata_entry_t&) = default;
-
-    // The copy assignment operator is implicitly deleted because this class has
-    // no non-static, non-const members, but we make it explicit.
-    txn_metadata_entry_t& operator=(const txn_metadata_entry_t&) = delete;
+    txn_metadata_entry_t& operator=(const txn_metadata_entry_t&) = default;
 
     friend inline bool operator==(txn_metadata_entry_t a, txn_metadata_entry_t b);
     friend inline bool operator!=(txn_metadata_entry_t a, txn_metadata_entry_t b);
@@ -220,7 +217,10 @@ private:
     static constexpr uint64_t c_value_sealed{0b101UL << c_txn_status_flags_shift};
 
 private:
-    const uint64_t m_word;
+    // Ideally this would be const, but that prevents us from reassigning a
+    // variable of this type (we cannot just rebind the name, we have to invoke
+    // the assignment operator, which is incompatible with immutability).
+    uint64_t m_word;
 };
 
 #include "txn_metadata_entry.inc"

@@ -1250,30 +1250,36 @@ bool client_t::gc_applied_txn_logs()
     // TXN_GC_COMPLETE flag on the txn metadata and continue.
     for (gaia_txn_id_t ts = post_gc_watermark + 1; ts <= post_apply_watermark; ++ts)
     {
-        ASSERT_INVARIANT(
-            !get_txn_metadata()->is_uninitialized_ts(ts),
-            "All uninitialized txn table entries should be sealed!");
+        txn_metadata_entry_t ts_entry = get_txn_metadata()->get_entry(ts);
 
         ASSERT_INVARIANT(
-            !(get_txn_metadata()->is_begin_ts(ts) && get_txn_metadata()->is_txn_active(ts)),
+            !ts_entry.is_uninitialized(),
+            "All uninitialized entries should be sealed!");
+
+        ASSERT_INVARIANT(
+            !(ts_entry.is_begin_ts_entry() && ts_entry.is_active()),
             "The watermark should not be advanced to an active begin_ts!");
 
-        if (get_txn_metadata()->is_commit_ts(ts))
+        if (ts_entry.is_commit_ts_entry())
         {
+            ASSERT_INVARIANT(
+                ts_entry.is_decided(),
+                "All commit_ts entries should be decided!");
+
             // If persistence is enabled, then we also need to check that
             // TXN_PERSISTENCE_COMPLETE is set (to avoid having redo versions
             // deallocated while they're being persisted).
             // REVIEW: For now, check the durable flag unconditionally.
             // Later we can check the flag conditionally on persistence settings.
-            if (!get_txn_metadata()->is_txn_durable(ts))
+            if (!ts_entry.is_durable())
             {
                 break;
             }
 
-            log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(ts);
+            log_offset_t log_offset = ts_entry.get_log_offset();
             ASSERT_INVARIANT(log_offset.is_valid(), "A commit_ts txn metadata entry must have a valid log offset!");
             txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
-            gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(ts);
+            gaia_txn_id_t begin_ts = ts_entry.get_timestamp();
 
             // If our begin_ts doesn't match the current begin_ts, the txn log
             // has already been invalidated (and possibly reused), so some other
@@ -1306,7 +1312,7 @@ bool client_t::gc_applied_txn_logs()
             auto cleanup_log_offset = make_scope_guard([&log_offset] { get_logs()->deallocate_log_offset(log_offset); });
 
             // Deallocate obsolete object versions and update index entries.
-            gc_txn_log_from_offset(log_offset, get_txn_metadata()->is_txn_committed(ts));
+            gc_txn_log_from_offset(log_offset, ts_entry.is_committed());
 
             // We need to mark this txn metadata TXN_GC_COMPLETE to allow the
             // post-GC watermark to advance.

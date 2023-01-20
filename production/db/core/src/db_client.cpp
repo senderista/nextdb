@@ -645,10 +645,17 @@ void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_
         // Validate any undecided submitted txns.
         if (get_txn_metadata()->is_commit_ts(ts) && get_txn_metadata()->is_txn_validating(ts))
         {
-            bool is_committed = validate_txn(ts);
+            // Spin briefly to give other threads a chance to validate this txn.
+            // 2us was empirically determined to maximize throughput.
+            spin_wait(2 * c_pause_iterations_per_us);
 
-            // Update the current txn's decided status.
-            get_txn_metadata()->update_txn_decision(ts, is_committed);
+            if (get_txn_metadata()->is_txn_validating(ts))
+            {
+                bool is_committed = validate_txn(ts);
+
+                // Update the current txn's decided status.
+                get_txn_metadata()->update_txn_decision(ts, is_committed);
+            }
         }
     }
 }
@@ -884,11 +891,18 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                     ts > txn_id(),
                     c_message_preceding_txn_should_have_been_validated);
 
-                // Recursively validate the current undecided txn.
-                bool is_committed = validate_txn(ts);
+                // Spin briefly to give other threads a chance to validate this txn.
+                // 0.5us was empirically determined to maximize throughput.
+                spin_wait(c_pause_iterations_per_us / 2);
 
-                // Update the current txn's decided status.
-                get_txn_metadata()->update_txn_decision(ts, is_committed);
+                if (get_txn_metadata()->is_txn_validating(ts))
+                {
+                    // Recursively validate the current undecided txn.
+                    bool is_committed = validate_txn(ts);
+
+                    // Update the current txn's decided status.
+                    get_txn_metadata()->update_txn_decision(ts, is_committed);
+                }
             }
 
             // If the validated txn is committed, test it for conflicts.

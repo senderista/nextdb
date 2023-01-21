@@ -641,13 +641,13 @@ void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_
         // the txn table.
         if (ts_entry.is_uninitialized())
         {
-            if (!get_txn_metadata()->seal_uninitialized_ts(ts))
-            {
-                // If the CAS failed, then the entry has been initialized since
-                // we read it, so reload it.
-                ts_entry = get_txn_metadata()->get_entry(ts);
-            }
+            get_txn_metadata()->seal_uninitialized_ts(ts);
+
+            // The entry is now initialized, so reload it.
+            ts_entry = get_txn_metadata()->get_entry(ts);
         }
+
+        ASSERT_INVARIANT(!ts_entry.is_uninitialized(), "Uninitialized entries must be initialized after sealing!");
 
         // Validate any undecided submitted txns.
         if (ts_entry.is_commit_ts_entry() && ts_entry.is_validating())
@@ -899,13 +899,13 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
         // otherwise).
         if (ts_entry.is_uninitialized())
         {
-            if (!get_txn_metadata()->seal_uninitialized_ts(ts))
-            {
-                // If the CAS failed, then the entry has been initialized since
-                // we read it, so reload it.
-                ts_entry = get_txn_metadata()->get_entry(ts);
-            }
+            get_txn_metadata()->seal_uninitialized_ts(ts);
+
+            // The entry is now initialized, so reload it.
+            ts_entry = get_txn_metadata()->get_entry(ts);
         }
+
+        ASSERT_INVARIANT(!ts_entry.is_uninitialized(), "Uninitialized entries must be initialized after sealing!");
 
         // Validate each undecided txn, and then test committed txns for conflicts.
         if (ts_entry.is_commit_ts_entry())
@@ -1098,16 +1098,26 @@ bool client_t::apply_txn_logs_to_shared_view()
     // applying the txn log.
     for (gaia_txn_id_t ts = pre_apply_watermark + 1; ts <= last_allocated_ts; ++ts)
     {
+        txn_metadata_entry_t ts_entry = get_txn_metadata()->get_entry(ts);
+
         // We need to seal uninitialized entries as we go along, so that we
         // don't miss any active begin_ts or committed commit_ts entries.
         //
-        // We continue processing sealed timestamps
-        // so that we can advance the pre-apply watermark over them.
-        get_txn_metadata()->seal_uninitialized_ts(ts);
+        // We continue processing sealed timestamps so that we can advance the
+        // pre-apply watermark over them.
+        if (ts_entry.is_uninitialized())
+        {
+            get_txn_metadata()->seal_uninitialized_ts(ts);
+
+            // The entry is now initialized, so reload it.
+            ts_entry = get_txn_metadata()->get_entry(ts);
+        }
+
+        ASSERT_INVARIANT(!ts_entry.is_uninitialized(), "Uninitialized entries must be initialized after sealing!");
 
         // If this is a commit_ts, we cannot advance the watermark unless it's
         // decided.
-        if (get_txn_metadata()->is_commit_ts(ts) && get_txn_metadata()->is_txn_validating(ts))
+        if (ts_entry.is_commit_ts_entry() && ts_entry.is_validating())
         {
             break;
         }
@@ -1118,16 +1128,16 @@ bool client_t::apply_txn_logs_to_shared_view()
         // can never advance into the conflict window of an undecided txn,
         // ensuring that all logs of committed txns within the conflict window
         // remain available for conflict testing.
-        if (get_txn_metadata()->is_begin_ts(ts))
+        if (ts_entry.is_begin_ts_entry())
         {
-            if (get_txn_metadata()->is_txn_active(ts))
+            if (ts_entry.is_active())
             {
                 break;
             }
 
-            if (get_txn_metadata()->is_txn_submitted(ts))
+            if (ts_entry.is_submitted())
             {
-                auto commit_ts = get_txn_metadata()->get_commit_ts_from_begin_ts(ts);
+                auto commit_ts = ts_entry.get_timestamp();
                 // NB: Because transitioning a begin_ts entry from ACTIVE to
                 // SUBMITTED and setting its linked commit_ts are not a single
                 // atomic operation, it is possible for a begin_ts entry in
@@ -1198,13 +1208,13 @@ bool client_t::apply_txn_logs_to_shared_view()
             break;
         }
 
-        if (get_txn_metadata()->is_commit_ts(ts))
+        if (ts_entry.is_commit_ts_entry())
         {
             ASSERT_INVARIANT(
-                get_txn_metadata()->is_txn_decided(ts),
+                ts_entry.is_decided(),
                 "The watermark should not be advanced to an undecided commit_ts!");
 
-            if (get_txn_metadata()->is_txn_committed(ts))
+            if (ts_entry.is_committed())
             {
                 // If a new txn starts after or while we apply this txn log to
                 // the shared view, but before we advance the post-apply

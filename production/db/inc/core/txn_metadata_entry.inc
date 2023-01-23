@@ -16,7 +16,7 @@ bool operator!=(txn_metadata_entry_t a, txn_metadata_entry_t b)
     return (a.m_word != b.m_word);
 }
 
-uint64_t txn_metadata_entry_t::get_word()
+uint64_t txn_metadata_entry_t::get_word() const
 {
     return m_word;
 }
@@ -49,97 +49,97 @@ txn_metadata_entry_t txn_metadata_entry_t::new_commit_ts_entry(gaia_txn_id_t beg
     return txn_metadata_entry_t{c_shifted_status_flags | shifted_log_offset | begin_ts};
 }
 
-bool txn_metadata_entry_t::is_uninitialized()
+bool txn_metadata_entry_t::is_uninitialized() const
 {
     return (m_word == c_value_uninitialized);
 }
 
-bool txn_metadata_entry_t::is_sealed()
+bool txn_metadata_entry_t::is_sealed() const
 {
     return (m_word == c_value_sealed);
 }
 
-bool txn_metadata_entry_t::is_begin_ts_entry()
+bool txn_metadata_entry_t::is_begin_ts_entry() const
 {
     // "Uninitialized" values also have the commit bit unset, but they're not considered to be begin timestamps.
     return (!is_uninitialized() && ((m_word & c_txn_status_commit_mask) == 0));
 }
 
-bool txn_metadata_entry_t::is_commit_ts_entry()
+bool txn_metadata_entry_t::is_commit_ts_entry() const
 {
     // "Sealed" values also have the commit bit set, but they're not considered to be commit timestamps.
     return (!is_sealed() && ((m_word & c_txn_status_commit_mask) == c_txn_status_commit_mask));
 }
 
-bool txn_metadata_entry_t::is_submitted()
+bool txn_metadata_entry_t::is_submitted() const
 {
     ASSERT_PRECONDITION(is_begin_ts_entry(), "Not a begin timestamp!");
     return (get_status() == c_txn_status_submitted);
 }
 
-bool txn_metadata_entry_t::is_validating()
+bool txn_metadata_entry_t::is_validating() const
 {
     ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     return (get_status() == c_txn_status_validating);
 }
 
-bool txn_metadata_entry_t::is_decided()
+bool txn_metadata_entry_t::is_decided() const
 {
     ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     constexpr uint64_t c_decided_mask = c_txn_status_decided << c_txn_status_flags_shift;
     return ((m_word & c_decided_mask) == c_decided_mask);
 }
 
-bool txn_metadata_entry_t::is_committed()
+bool txn_metadata_entry_t::is_committed() const
 {
     ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     return (get_status() == c_txn_status_committed);
 }
 
-bool txn_metadata_entry_t::is_aborted()
+bool txn_metadata_entry_t::is_aborted() const
 {
     ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     return (get_status() == c_txn_status_aborted);
 }
 
-bool txn_metadata_entry_t::is_gc_complete()
+bool txn_metadata_entry_t::is_gc_complete() const
 {
     ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     uint64_t gc_flags = (m_word & c_txn_gc_flags_mask) >> c_txn_gc_flags_shift;
     return (gc_flags == c_txn_gc_complete);
 }
 
-bool txn_metadata_entry_t::is_durable()
+bool txn_metadata_entry_t::is_durable() const
 {
     ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
     uint64_t persistence_flags = (m_word & c_txn_persistence_flags_mask) >> c_txn_persistence_flags_shift;
     return (persistence_flags == c_txn_persistence_complete);
 }
 
-bool txn_metadata_entry_t::is_active()
+bool txn_metadata_entry_t::is_active() const
 {
     ASSERT_PRECONDITION(is_begin_ts_entry(), "Not a begin timestamp!");
     return (get_status() == c_txn_status_active);
 }
 
-bool txn_metadata_entry_t::is_terminated()
+bool txn_metadata_entry_t::is_terminated() const
 {
     ASSERT_PRECONDITION(is_begin_ts_entry(), "Not a begin timestamp!");
     return (get_status() == c_txn_status_terminated);
 }
 
-uint64_t txn_metadata_entry_t::get_status()
+uint64_t txn_metadata_entry_t::get_status() const
 {
     return ((m_word & c_txn_status_flags_mask) >> c_txn_status_flags_shift);
 }
 
-gaia_txn_id_t txn_metadata_entry_t::get_timestamp()
+gaia_txn_id_t txn_metadata_entry_t::get_timestamp() const
 {
     // The timestamp is in the low 42 bits of the metadata word.
     return (m_word & c_txn_ts_mask);
 }
 
-db::log_offset_t txn_metadata_entry_t::get_log_offset()
+db::log_offset_t txn_metadata_entry_t::get_log_offset() const
 {
     ASSERT_PRECONDITION(is_commit_ts_entry(), "Not a commit timestamp!");
 
@@ -147,7 +147,7 @@ db::log_offset_t txn_metadata_entry_t::get_log_offset()
     return (m_word & c_txn_log_offset_mask) >> c_txn_log_offset_shift;
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_submitted()
+txn_metadata_entry_t txn_metadata_entry_t::set_submitted() const
 {
     ASSERT_PRECONDITION(is_active(), "Not an active transaction!");
 
@@ -158,7 +158,7 @@ txn_metadata_entry_t txn_metadata_entry_t::set_submitted()
     return txn_metadata_entry_t{m_word | c_submitted_flags};
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_terminated()
+txn_metadata_entry_t txn_metadata_entry_t::set_terminated() const
 {
     ASSERT_PRECONDITION(is_active(), "Not an active transaction!");
 
@@ -167,7 +167,7 @@ txn_metadata_entry_t txn_metadata_entry_t::set_terminated()
         c_terminated_flags | (m_word & ~c_txn_status_flags_mask)};
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_decision(bool has_committed)
+txn_metadata_entry_t txn_metadata_entry_t::set_decision(bool has_committed) const
 {
     // The commit_ts metadata must be in state TXN_VALIDATING or TXN_DECIDED.
     // (We allow the latter to enable idempotent concurrent validation.)
@@ -185,7 +185,7 @@ txn_metadata_entry_t txn_metadata_entry_t::set_decision(bool has_committed)
         (m_word & ~c_commit_flags_mask) | (decided_status_flags << c_txn_status_flags_shift)};
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_durable()
+txn_metadata_entry_t txn_metadata_entry_t::set_durable() const
 {
     ASSERT_PRECONDITION(is_decided(), "Not a decided transaction!");
 
@@ -194,7 +194,7 @@ txn_metadata_entry_t txn_metadata_entry_t::set_durable()
         m_word | (c_txn_persistence_complete << c_txn_persistence_flags_shift)};
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_gc_complete()
+txn_metadata_entry_t txn_metadata_entry_t::set_gc_complete() const
 {
     ASSERT_PRECONDITION(is_decided(), "Not a decided transaction!");
 
@@ -203,14 +203,14 @@ txn_metadata_entry_t txn_metadata_entry_t::set_gc_complete()
         m_word | (c_txn_gc_complete << c_txn_gc_flags_shift)};
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_timestamp(gaia_txn_id_t ts)
+txn_metadata_entry_t txn_metadata_entry_t::set_timestamp(gaia_txn_id_t ts) const
 {
     // The timestamp must fit into the low 42 bits of the metadata word.
     ASSERT_INVARIANT((ts & c_txn_ts_mask) == ts, "Timestamp must fit into 42 bits!");
     return txn_metadata_entry_t{m_word | ts};
 }
 
-const char* txn_metadata_entry_t::status_to_str()
+const char* txn_metadata_entry_t::status_to_str() const
 {
     ASSERT_PRECONDITION(
         !is_uninitialized() && !is_sealed(),
@@ -238,7 +238,7 @@ const char* txn_metadata_entry_t::status_to_str()
     return nullptr;
 }
 
-std::string txn_metadata_entry_t::dump_metadata()
+std::string txn_metadata_entry_t::dump_metadata() const
 {
     std::stringstream str;
     std::bitset<c_txn_metadata_bit_width> metadata_bits{m_word};

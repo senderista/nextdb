@@ -49,40 +49,40 @@ public:
     friend inline bool operator==(txn_metadata_entry_t a, txn_metadata_entry_t b);
     friend inline bool operator!=(txn_metadata_entry_t a, txn_metadata_entry_t b);
 
-    inline uint64_t get_word();
+    inline uint64_t get_word() const;
 
     static inline txn_metadata_entry_t uninitialized_value();
     static inline txn_metadata_entry_t sealed_value();
     static inline txn_metadata_entry_t new_begin_ts_entry();
     static inline txn_metadata_entry_t new_commit_ts_entry(gaia_txn_id_t begin_ts, db::log_offset_t log_offset);
 
-    inline bool is_uninitialized();
-    inline bool is_sealed();
-    inline bool is_begin_ts_entry();
-    inline bool is_commit_ts_entry();
-    inline bool is_submitted();
-    inline bool is_validating();
-    inline bool is_decided();
-    inline bool is_committed();
-    inline bool is_aborted();
-    inline bool is_gc_complete();
-    inline bool is_durable();
-    inline bool is_active();
-    inline bool is_terminated();
+    inline bool is_uninitialized() const;
+    inline bool is_sealed() const;
+    inline bool is_begin_ts_entry() const;
+    inline bool is_commit_ts_entry() const;
+    inline bool is_submitted() const;
+    inline bool is_validating() const;
+    inline bool is_decided() const;
+    inline bool is_committed() const;
+    inline bool is_aborted() const;
+    inline bool is_gc_complete() const;
+    inline bool is_durable() const;
+    inline bool is_active() const;
+    inline bool is_terminated() const;
 
-    inline uint64_t get_status();
-    inline gaia_txn_id_t get_timestamp();
-    inline db::log_offset_t get_log_offset();
+    inline uint64_t get_status() const;
+    inline gaia_txn_id_t get_timestamp() const;
+    inline db::log_offset_t get_log_offset() const;
 
-    inline txn_metadata_entry_t set_submitted();
-    inline txn_metadata_entry_t set_terminated();
-    inline txn_metadata_entry_t set_decision(bool is_committed);
-    inline txn_metadata_entry_t set_durable();
-    inline txn_metadata_entry_t set_gc_complete();
-    inline txn_metadata_entry_t set_timestamp(gaia_txn_id_t ts);
+    inline txn_metadata_entry_t set_submitted() const;
+    inline txn_metadata_entry_t set_terminated() const;
+    inline txn_metadata_entry_t set_decision(bool is_committed) const;
+    inline txn_metadata_entry_t set_durable() const;
+    inline txn_metadata_entry_t set_gc_complete() const;
+    inline txn_metadata_entry_t set_timestamp(gaia_txn_id_t ts) const;
 
-    inline const char* status_to_str();
-    inline std::string dump_metadata();
+    inline const char* status_to_str() const;
+    inline std::string dump_metadata() const;
 
 private:
     // Transaction metadata constants.

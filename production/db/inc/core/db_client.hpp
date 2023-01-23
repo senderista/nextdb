@@ -143,7 +143,7 @@ private:
     // Returns true if contention was detected, false otherwise.
     static bool update_pre_reclaim_watermark();
 
-    static void apply_txn_log_from_ts(gaia_txn_id_t commit_ts);
+    static void apply_txn_log_from_ts_and_offset(gaia_txn_id_t commit_ts, log_offset_t log_offset);
     static void gc_txn_log_from_offset(log_offset_t log_offset, bool is_committed);
     static void deallocate_object(gaia_offset_t offset);
     static void deallocate_txn_log(txn_log_t* txn_log, bool is_committed);

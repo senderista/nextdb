@@ -1215,7 +1215,7 @@ bool client_t::apply_txn_logs_to_shared_view()
                 // snapshot of the shared view, but that is benign because log
                 // replay is idempotent (as long as logs are applied in
                 // timestamp order).
-                apply_txn_log_from_ts(ts);
+                apply_txn_log_from_ts_and_offset(ts, ts_entry.get_log_offset());
             }
         }
 
@@ -1406,28 +1406,31 @@ bool client_t::update_post_gc_watermark()
     // abort the scan.
     for (gaia_txn_id_t ts = post_gc_watermark + 1; ts <= post_apply_watermark; ++ts)
     {
+        txn_metadata_entry_t ts_entry = get_txn_metadata()->get_entry(ts);
+
         ASSERT_INVARIANT(
-            !get_txn_metadata()->is_uninitialized_ts(ts),
+            !ts_entry.is_uninitialized(),
             "All uninitialized txn table entries should be sealed!");
 
-        if (get_txn_metadata()->is_begin_ts(ts))
+        if (ts_entry.is_begin_ts_entry())
         {
             ASSERT_INVARIANT(
-                !get_txn_metadata()->is_txn_active(ts),
+                !ts_entry.is_active(),
                 "The pre-apply watermark should not be advanced to an active begin_ts!");
 
             // We can only advance the post-GC watermark to a submitted begin_ts
             // if its commit_ts is marked TXN_GC_COMPLETE. This ensures that
             // acquiring a reference to a txn log referenced by a commit_ts
             // entry protects the entire conflict window of the commit_ts.
-            if (get_txn_metadata()->is_txn_submitted(ts))
+            if (ts_entry.is_submitted())
             {
-                auto commit_ts = get_txn_metadata()->get_commit_ts_from_begin_ts(ts);
+                auto commit_ts = ts_entry.get_timestamp();
                 // The pre-apply watermark can only advance to a submitted
                 // begin_ts if its commit_ts is validated, and the commit_ts
                 // cannot be validated without setting the begin_ts entry's
                 // commit_ts, so this commit_ts must be valid.
-                ASSERT_INVARIANT(commit_ts.is_valid() && get_txn_metadata()->is_txn_decided(commit_ts),
+                ASSERT_INVARIANT(
+                    commit_ts.is_valid() && get_txn_metadata()->is_txn_decided(commit_ts),
                     "The pre-apply watermark should not be advanced to a submitted begin_ts with an undecided commit_ts!");
                 if (!get_txn_metadata()->is_txn_gc_complete(commit_ts))
                 {
@@ -1436,15 +1439,15 @@ bool client_t::update_post_gc_watermark()
             }
         }
 
-        if (get_txn_metadata()->is_commit_ts(ts))
+        if (ts_entry.is_commit_ts_entry())
         {
             ASSERT_INVARIANT(
-                get_txn_metadata()->is_txn_decided(ts),
+                ts_entry.is_decided(),
                 "The pre-apply watermark should not be advanced to an undecided commit_ts!");
 
             // We can only advance the post-GC watermark to a commit_ts if it is
             // marked TXN_GC_COMPLETE.
-            if (!get_txn_metadata()->is_txn_gc_complete(ts))
+            if (!ts_entry.is_gc_complete())
             {
                 break;
             }
@@ -1530,11 +1533,15 @@ bool client_t::update_pre_reclaim_watermark()
     return false;
 }
 
-void client_t::apply_txn_log_from_ts(gaia_txn_id_t commit_ts)
+void client_t::apply_txn_log_from_ts_and_offset(gaia_txn_id_t commit_ts, log_offset_t log_offset)
 {
     ASSERT_PRECONDITION(
         get_txn_metadata()->is_commit_ts(commit_ts) && get_txn_metadata()->is_txn_committed(commit_ts),
-        "apply_txn_log_from_ts() must be called on the commit_ts of a committed txn!");
+        "apply_txn_log_from_ts_and_offset() must be called on the commit_ts of a committed txn!");
+
+    ASSERT_PRECONDITION(
+        log_offset == get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts),
+        "apply_txn_log_from_ts_and_offset() must be called on the commit_ts of a committed txn!");
 
     // Because txn logs are only eligible for GC after they fall behind the
     // post-apply watermark, we don't need to protect this txn log from GC.
@@ -1542,7 +1549,7 @@ void client_t::apply_txn_log_from_ts(gaia_txn_id_t commit_ts)
         commit_ts <= get_watermarks()->get_watermark(watermark_type_t::pre_apply) &&
         commit_ts > get_watermarks()->get_watermark(watermark_type_t::post_apply),
         "Cannot apply txn log unless it is at or behind the pre-apply watermark and ahead of the post-apply watermark!");
-    log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts);
+
     txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
 
     // Ensure that the begin_ts in this metadata entry matches the txn log header.

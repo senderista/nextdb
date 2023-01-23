@@ -61,7 +61,7 @@ constexpr size_t c_dump_stats_timestamp_interval{1UL << 20};
 
 // The number of timestamp entries by which the pre-reclaim watermark can lag the
 // post-GC watermark before we attempt to advance the pre-reclaim watermark.
-constexpr size_t c_txn_metadata_reclaim_threshold{64};
+constexpr size_t c_txn_metadata_reclaim_threshold{1024};
 
 } // namespace db
 } // namespace gaia

@@ -85,6 +85,13 @@ public:
     inline txn_metadata_entry_t compare_exchange(gaia_txn_id_t ts,
         txn_metadata_entry_t expected_value, txn_metadata_entry_t desired_value);
 
+    // Spins up to a timeout (on the order of context switch latency), testing
+    // the commit_ts entry at the given timestamp for TXN_DECIDED status.
+    //
+    // Returns true if the given commit_ts entry was TXN_DECIDED before timeout,
+    // false otherwise.
+    inline bool poll_for_decision(gaia_txn_id_t ts);
+
     // This uninitializes all entries from start_ts (inclusive) to end_ts (exclusive).
     inline void uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
 

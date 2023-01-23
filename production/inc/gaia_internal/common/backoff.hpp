@@ -18,11 +18,11 @@ namespace backoff
 {
 
 #if defined(__x86_64__)
-static void pause() { asm volatile("pause"); }
+inline void pause() { asm volatile("pause"); }
 #elif defined(__aarch64__)
-static void pause() { asm volatile("yield"); }
+inline void pause() { asm volatile("yield"); }
 #else
-static void pause() { asm volatile("" ::: "memory"); }
+inline void pause() { asm volatile("" ::: "memory"); }
 #endif
 
 // On pre-Skylake Intel CPUs, PAUSE has latency of ~10 cycles. We assume the

@@ -264,6 +264,27 @@ txn_metadata_entry_t txn_metadata_t::compare_exchange(gaia_txn_id_t ts,
     return actual_value;
 }
 
+inline bool txn_metadata_t::poll_for_decision(gaia_txn_id_t ts)
+{
+    ASSERT_PRECONDITION(is_commit_ts(ts), "Expected a commit_ts!");
+    auto& entry = m_txn_metadata_map[ts_to_buffer_index(ts)];
+
+    // We bound spinning by context switch latency, conservatively 5us.
+    constexpr size_t c_iterations = 5 * common::backoff::c_pause_iterations_per_us;
+    for (size_t i = 0; i < c_iterations; ++i)
+    {
+        txn_metadata_entry_t current_value{entry.load(std::memory_order_relaxed)};
+        if (current_value.is_decided())
+        {
+            return true;
+        }
+
+        common::backoff::pause();
+    }
+
+    return false;
+}
+
 void txn_metadata_t::uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts)
 {
     // We could just call set_entry(uninitialized_value()) for the whole range,

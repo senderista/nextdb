@@ -653,11 +653,7 @@ void client_t::validate_txns_in_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_
         if (ts_entry.is_commit_ts_entry() && ts_entry.is_validating())
         {
             // Spin briefly to give other threads a chance to validate this txn.
-            // 2us was empirically determined to maximize throughput.
-            spin_wait(2 * c_pause_iterations_per_us);
-
-            // We must read the latest value of the entry.
-            if (get_txn_metadata()->is_txn_validating(ts))
+            if (!get_txn_metadata()->poll_for_decision(ts))
             {
                 bool is_committed = validate_txn(ts);
 
@@ -920,11 +916,7 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                     c_message_preceding_txn_should_have_been_validated);
 
                 // Spin briefly to give other threads a chance to validate this txn.
-                // 0.5us was empirically determined to maximize throughput.
-                spin_wait(c_pause_iterations_per_us / 2);
-
-                // We must read the latest value of the entry.
-                if (get_txn_metadata()->is_txn_validating(ts))
+                if (!get_txn_metadata()->poll_for_decision(ts))
                 {
                     // Recursively validate the current undecided txn.
                     bool is_committed = validate_txn(ts);

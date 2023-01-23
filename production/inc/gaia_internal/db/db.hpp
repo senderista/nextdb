@@ -50,7 +50,7 @@ constexpr uint64_t c_session_magic{0xcafebabedecafbad};
 
 // Time to spend backing off in a spin loop after contention was detected during GC.
 // This should be comparable to (or less than) context switch latency (~5us).
-constexpr size_t c_contention_backoff_us{5};
+constexpr size_t c_contention_backoff_us{3};
 
 // Time to spend backing off in a spin loop before remapping the global snapshot.
 // 90us was empirically determined to maximize throughput.

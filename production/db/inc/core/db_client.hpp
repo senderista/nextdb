@@ -148,9 +148,6 @@ private:
     static void deallocate_object(gaia_offset_t offset);
     static void deallocate_txn_log(txn_log_t* txn_log, bool is_committed);
 
-    static bool acquire_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
-    static void release_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts);
-
     // Prevents txn metadata from having its memory reclaimed during a scan.
     static void protect_txn_metadata();
     static void unprotect_txn_metadata();

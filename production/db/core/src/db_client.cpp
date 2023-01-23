@@ -840,7 +840,8 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
 
 bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 {
-    gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
+    txn_metadata_entry_t commit_ts_entry = get_txn_metadata()->get_entry(commit_ts);
+    gaia_txn_id_t begin_ts = commit_ts_entry.get_timestamp();
 
     // Ensure that begin_ts is protected from reclamation.
     ASSERT_PRECONDITION(is_protected_ts(begin_ts), "begin_ts is unprotected from reclamation!");
@@ -868,7 +869,7 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
     // If we fail to acquire the reference, the conflict window is unprotected,
     // but we don't need to scan the conflict window because the txn must have
     // already been validated.
-    if (!acquire_txn_log_reference_from_commit_ts(commit_ts))
+    if (!acquire_txn_log_reference(commit_ts_entry.get_log_offset(), begin_ts))
     {
         // If the committing txn has already had its log invalidated,
         // then it must have already been (recursively) validated, so
@@ -878,8 +879,8 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
             c_message_validating_txn_should_have_been_validated_before_log_invalidation);
         return get_txn_metadata()->is_txn_committed(commit_ts);
     }
-    auto release_committing_log_ref = make_scope_guard([&commit_ts] {
-        release_txn_log_reference_from_commit_ts(commit_ts);
+    auto release_committing_log_ref = make_scope_guard([commit_ts_entry, begin_ts] {
+        release_txn_log_reference(commit_ts_entry.get_log_offset(), begin_ts);
     });
 
     // Seal all uninitialized entries, validate all undecided txns,
@@ -943,7 +944,7 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                 // thread concurrently advancing the watermark. If either log is
                 // invalidated, it must be that another thread has validated our
                 // txn, so we can exit early.
-                if (!acquire_txn_log_reference_from_commit_ts(ts))
+                if (!acquire_txn_log_reference(ts_entry.get_log_offset(), ts_entry.get_timestamp()))
                 {
                     // If this submitted txn already had its log invalidated, then
                     // it must be eligible for GC. But any commit_ts within the
@@ -955,8 +956,8 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                         c_message_validating_txn_should_have_been_validated_before_conflicting_log_invalidation);
                     return get_txn_metadata()->is_txn_committed(commit_ts);
                 }
-                auto release_submitted_log_ref = make_scope_guard([&ts] {
-                    release_txn_log_reference_from_commit_ts(ts);
+                auto release_submitted_log_ref = make_scope_guard([ts_entry] {
+                    release_txn_log_reference(ts_entry.get_log_offset(), ts_entry.get_timestamp());
                 });
 
                 if (txn_logs_conflict(
@@ -1674,22 +1675,6 @@ bool client_t::txn_logs_conflict(log_offset_t offset1, log_offset_t offset2)
     }
 
     return false;
-}
-
-bool client_t::acquire_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts)
-{
-    ASSERT_PRECONDITION(get_txn_metadata()->is_commit_ts(commit_ts), "Not a commit timestamp!");
-    gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
-    log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts);
-    return acquire_txn_log_reference(log_offset, begin_ts);
-}
-
-void client_t::release_txn_log_reference_from_commit_ts(gaia_txn_id_t commit_ts)
-{
-    ASSERT_PRECONDITION(get_txn_metadata()->is_commit_ts(commit_ts), "Not a commit timestamp!");
-    gaia_txn_id_t begin_ts = get_txn_metadata()->get_begin_ts_from_commit_ts(commit_ts);
-    log_offset_t log_offset = get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts);
-    release_txn_log_reference(log_offset, begin_ts);
 }
 
 // Record a transactional operation in the txn log.

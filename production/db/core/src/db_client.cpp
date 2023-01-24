@@ -961,8 +961,8 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                 });
 
                 if (txn_logs_conflict(
-                    get_txn_metadata()->get_txn_log_offset_from_ts(commit_ts),
-                    get_txn_metadata()->get_txn_log_offset_from_ts(ts)))
+                    ts_entry.get_log_offset(),
+                    commit_ts_entry.get_log_offset()))
                 {
                     return false;
                 }

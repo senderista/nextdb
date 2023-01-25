@@ -99,13 +99,6 @@ static bool try_apply_mask_to_word(
             {
                 return false;
             }
-
-            // The CAS "spuriously" failed (due to unrelated bits in the same
-            // word being modified), so back off to reduce contention.
-            constexpr size_t c_cas_backoff_us{1};
-            constexpr size_t c_cas_backoff_iterations{
-                c_cas_backoff_us * gaia::common::backoff::c_pause_iterations_per_us};
-            gaia::common::backoff::spin_wait(c_cas_backoff_iterations);
         }
     }
 }

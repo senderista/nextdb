@@ -20,7 +20,6 @@
 
 #include "gaia/common.hpp"
 
-#include "gaia_internal/common/backoff.hpp"
 #include "gaia_internal/common/debug_assert.hpp"
 
 namespace gaia

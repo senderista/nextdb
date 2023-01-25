@@ -337,9 +337,6 @@ void client_t::begin_transaction()
 
     if (!can_reuse_snapshot)
     {
-        // Back off to minimize mmap/munmap contention.
-        spin_wait(c_remap_backoff_us * c_pause_iterations_per_us);
-
         // Map a new private COW view of the locator shared memory segment.
         private_locators().close();
         bool manage_fd = false;
@@ -522,12 +519,8 @@ void client_t::commit_transaction()
         // calling protect_txn_metadata()).
         cleanup_txn_metadata_protection.dismiss();
         contention_detected |= update_pre_reclaim_watermark();
-        // If we detect contention, then back off for about 5us (empirically
-        // determined to be the best interval).
-        if (contention_detected)
-        {
-            spin_wait(c_contention_backoff_us * c_pause_iterations_per_us);
-        }
+        // REVIEW: We formerly backed off on detecting contention, but removed
+        // it after other changes neutralized its effect on throughput.
     });
 
     // Before registering the log, sort by locator for fast conflict detection.

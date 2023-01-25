@@ -300,7 +300,7 @@ void txn_metadata_t::uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t
     // virtual memory?
     //
     // FIXME: For now we do the obvious but inefficient thing.
-    ASSERT_PRECONDITION(start_ts < end_ts, "The start timestamp must be larger than the end timestamp!");
+    ASSERT_PRECONDITION(start_ts < end_ts, "The start timestamp must be older than the end timestamp!");
     for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
     {
         set_entry(ts, txn_metadata_entry_t::uninitialized_value());

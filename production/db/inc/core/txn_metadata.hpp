@@ -15,6 +15,7 @@
 #include <optional>
 
 #include "gaia_internal/common/assert.hpp"
+#include "gaia_internal/common/backoff.hpp"
 #include "gaia_internal/db/db.hpp"
 #include "gaia_internal/db/db_types.hpp"
 

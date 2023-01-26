@@ -299,7 +299,7 @@ void client_t::begin_transaction()
         s_session_context->latest_applied_commit_ts_lower_bound = c_invalid_gaia_txn_id;
     }
 
-    // We use this flag to apply various single-thread optimizations.
+    // FASTPATH: We use this flag to apply various single-thread optimizations.
     bool is_snapshot_window_empty = false;
     if (latest_applied_commit_ts_lower_bound().is_valid())
     {
@@ -322,8 +322,8 @@ void client_t::begin_transaction()
         throw transaction_log_allocation_failure_internal();
     }
 
-    // If our snapshot is already mapped, and either the snapshot window is
-    // empty or we can pin all committed txn logs between
+    // FASTPATH: If our snapshot is already mapped, and either the snapshot
+    // window is empty or we can pin all committed txn logs between
     // latest_applied_commit_ts_lower_bound and our begin_ts, then we can reuse
     // our snapshot. Otherwise, we must remap our snapshot.
     bool can_reuse_snapshot = (
@@ -368,7 +368,8 @@ void client_t::begin_transaction()
             get_logs()->get_log_from_offset(log_offset)->release_reference(txn_id);
         }
 
-        // Remember the latest log we applied so we can reuse this snapshot.
+        // FASTPATH: Remember the latest log we applied so we can reuse this
+        // snapshot.
         if (!txn_logs_for_snapshot().empty())
         {
             auto latest_applied_log_txn_id = txn_logs_for_snapshot().back().first;
@@ -436,6 +437,7 @@ void client_t::commit_transaction()
 
     // This optimization to treat committing a read-only txn as a rollback
     // allows us to avoid any special cases for empty txn logs.
+    //
     // REVIEW: Should read-only txns have to perform system maintenance tasks
     // (arguably yes because they force retaining obsolete versions)?
     if (txn_log()->record_count == 0)
@@ -520,7 +522,7 @@ void client_t::commit_transaction()
         cleanup_txn_metadata_protection.dismiss();
         contention_detected |= update_pre_reclaim_watermark();
         // REVIEW: We formerly backed off on detecting contention, but removed
-        // it after other changes neutralized its effect on throughput.
+        // backoff after other changes neutralized its effect on throughput.
     });
 
     // Before registering the log, sort by locator for fast conflict detection.
@@ -548,14 +550,22 @@ void client_t::commit_transaction()
     get_txn_metadata()->update_txn_decision(commit_ts, is_committed);
 
     // Throw an exception on an abort decision.
+    //
     // REVIEW: We could include the gaia_ids of conflicting objects in
     // transaction_update_conflict_internal (message or structured data).
+    //
+    // REVIEW: For compatibility with other language bindings (including C), and
+    // efficient internal retry, we should probably replace exceptions with a
+    // C-compatible API that returns a success boolean and sets a specific error
+    // code and error message on failure, so higher-level bindings can throw an
+    // appropriate exception.
     if (!is_committed)
     {
         throw transaction_update_conflict_internal();
     }
 
     // TODO: Persist the commit decision.
+    //
     // REVIEW: For now, just set the durable flag unconditionally after validation.
     // Later we can set the flag conditionally on persistence settings.
     //
@@ -578,8 +588,8 @@ void client_t::commit_transaction()
     // idempotent, so this is benign, and cheaper than applying our undo log
     // first to avoid the duplicate log application.
 
-    // If the conflict window is empty, then we already applied our own log,
-    // which is the only unapplied committed log since our begin_ts.
+    // FASTPATH: If the conflict window is empty, then we already applied our
+    // own log, which is the only unapplied committed log since our begin_ts.
     bool can_apply_logs = is_conflict_window_empty;
     if (!is_conflict_window_empty)
     {
@@ -602,12 +612,97 @@ void client_t::commit_transaction()
 
     if (can_apply_logs)
     {
-        // Remember the latest log we applied so we can reuse this snapshot.
-        // (The latest log applied is always our own.)
+        // FASTPATH: Remember the latest log we applied so we can reuse this
+        // snapshot. (The latest log applied is always our own.)
         s_session_context->latest_applied_commit_ts_lower_bound = commit_ts;
 
         // We can possibly reuse this snapshot, so keep it mapped.
         cleanup_snapshot.dismiss();
+    }
+
+    // FASTPATH: If our begin_ts immediately precedes our commit_ts, and the
+    // post-apply and post-GC watermarks have already been advanced to either
+    // our begin_ts or its predecessor, then directly apply our log to the
+    // global snapshot, directly GC it, and directly advance watermarks to our
+    // commit_ts.
+    //
+    // NB: Like all FASTPATH code, this entire block can be removed with no
+    // effect on correctness!
+    auto pre_begin_ts = txn_id() - 1;
+    ASSERT_INVARIANT(
+        !(get_txn_metadata()->is_commit_ts(pre_begin_ts) && get_txn_metadata()->is_txn_validating(pre_begin_ts)),
+        "Any commit_ts preceding a decided commit_ts must also be decided!");
+    // Relaxed loads are sufficient, because stale reads will just cause
+    // advance_watermark() to later fail.
+    bool relaxed_load = true;
+    auto post_gc_watermark = get_watermarks()->get_watermark(
+        watermark_type_t::post_gc, relaxed_load);
+    auto post_apply_watermark = get_watermarks()->get_watermark(
+        watermark_type_t::post_apply, relaxed_load);
+    // REVIEW: Can relaxed loads violate this invariant, making the assert incorrect?
+    ASSERT_INVARIANT(
+        post_gc_watermark <= post_apply_watermark,
+        "post-GC watermark must be at least as old as post-apply watermark!");
+
+    if (is_conflict_window_empty &&
+        (post_apply_watermark == txn_id() || post_apply_watermark == pre_begin_ts) &&
+        (post_gc_watermark == txn_id() || post_gc_watermark == pre_begin_ts))
+    {
+        // Apply this committed txn to the global snapshot.
+
+        if (!get_watermarks()->advance_watermark(watermark_type_t::pre_apply, commit_ts))
+        {
+            return;
+        }
+        apply_txn_log_from_ts_and_offset(commit_ts, txn_log_offset());
+        bool has_advanced_watermark = get_watermarks()->advance_watermark(watermark_type_t::post_apply, commit_ts);
+        // No other thread should be able to advance the post-apply watermark,
+        // because only one thread can advance the pre-apply watermark to this
+        // timestamp.
+        ASSERT_INVARIANT(has_advanced_watermark, "Couldn't advance the post-apply watermark!");
+
+        // GC this committed txn's log and mark it GC-complete.
+
+        if (!txn_log()->invalidate(txn_id()))
+        {
+            return;
+        }
+        // Deallocate obsolete object versions.
+        gc_txn_log_from_offset(txn_log_offset(), true);
+        // Because we invalidated the log offset, we need to ensure it is
+        // deallocated so it can be reused.
+        get_logs()->deallocate_log_offset(txn_log_offset());
+        // We need to mark this txn metadata entry TXN_GC_COMPLETE before we can
+        // advance the post-GC watermark.
+        bool has_set_metadata = get_txn_metadata()->set_txn_gc_complete(commit_ts);
+        // If persistence is enabled, then this commit_ts must have been
+        // marked durable before we advanced the watermark, and no other
+        // thread can set TXN_GC_COMPLETE after we invalidate the txn log, so
+        // it should not be possible for this CAS to fail.
+        ASSERT_INVARIANT(has_set_metadata, "Txn metadata cannot change after we invalidate the txn log!");
+        if (!get_watermarks()->advance_watermark(watermark_type_t::post_gc, commit_ts))
+        {
+            return;
+        }
+
+        // If the pre-reclaim watermark doesn't lag by more than the slack
+        // threshold, don't bother trying to advance it.
+
+        // Because we already reserved the value of the post-GC watermark, the
+        // pre-reclaim watermark cannot advance beyond it.
+        ASSERT_INVARIANT(
+            get_watermarks()->get_watermark(watermark_type_t::pre_reclaim) <= commit_ts,
+            "The pre-reclaim watermark cannot advance past this commit_ts!");
+        if (commit_ts - get_watermarks()->get_watermark(watermark_type_t::pre_reclaim) >= c_txn_metadata_reclaim_threshold)
+        {
+            return;
+        }
+
+        // FASTPATH: We have performed all work that would have been performed
+        // by do_txn_log_maintenance(), and the pre-reclaim watermark does not
+        // need to be advanced, so we can safely return without performing that
+        // work.
+        do_gc.dismiss();
     }
 }
 
@@ -1108,7 +1203,7 @@ bool client_t::apply_txn_logs_to_shared_view()
             break;
         }
 
-        // The watermark cannot be advanced past any begin_ts whose txn is not
+        // The watermark cannot be advanced to any begin_ts whose txn is not
         // either in the TXN_TERMINATED state or in the TXN_SUBMITTED state with
         // its commit_ts in the TXN_DECIDED state. This means that the watermark
         // can never advance into the conflict window of an undecided txn,
@@ -1307,11 +1402,11 @@ bool client_t::gc_applied_txn_logs()
             // deallocated so it can be reused.
             auto cleanup_log_offset = make_scope_guard([&log_offset] { get_logs()->deallocate_log_offset(log_offset); });
 
-            // Deallocate obsolete object versions and update index entries.
+            // Deallocate obsolete object versions.
             gc_txn_log_from_offset(log_offset, ts_entry.is_committed());
 
-            // We need to mark this txn metadata TXN_GC_COMPLETE to allow the
-            // post-GC watermark to advance.
+            // We need to mark this txn metadata entry TXN_GC_COMPLETE to allow
+            // the post-GC watermark to advance.
             bool has_set_metadata = get_txn_metadata()->set_txn_gc_complete(ts);
 
             // If persistence is enabled, then this commit_ts must have been

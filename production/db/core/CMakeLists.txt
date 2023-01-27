@@ -109,5 +109,6 @@ set(GAIA_DB_CORE_TEST_INCLUDES
 
 add_gtest(test_type_index tests/test_type_index.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_common;gaia_db_client;${LIB_CAP};${LIB_EXPLAIN}")
 add_gtest(test_db_client tests/test_db_client.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
-add_gtest(test_concurrent_db_client tests/test_concurrent_db_client.cpp "${GEN_DIR};${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")
+# test_concurrent_db_client has its own main() function, so we pass HAS_MAIN=TRUE to add_gtest().
+add_gtest(test_concurrent_db_client tests/test_concurrent_db_client.cpp "${GEN_DIR};${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client" "" TRUE "")
 add_gtest(test_sessions tests/test_sessions.cpp "${GAIA_DB_CORE_TEST_INCLUDES}" "gaia_db_client")

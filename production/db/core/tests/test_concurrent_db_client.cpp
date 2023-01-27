@@ -6,7 +6,10 @@
 // or at https://opensource.org/licenses/MIT.
 ////////////////////////////////////////////////////
 
+#include <cerrno>
 #include <csignal>
+#include <cstdlib>
+#include <cstring>
 
 #include <atomic>
 #include <condition_variable>
@@ -17,6 +20,7 @@
 
 #include "gaia/db/db.hpp"
 
+#include "gaia_internal/common/backoff.hpp"
 #include "gaia_internal/common/scope_guard.hpp"
 #include "gaia_internal/common/system_error.hpp"
 #include "gaia_internal/common/timer.hpp"
@@ -68,6 +72,10 @@ private:
 
 class db__core__concurrent_db_client__test : public db_test_base_t
 {
+public:
+    static constexpr char c_arg_name[] = "--txn-delay-us";
+    static inline size_t s_txn_delay_us{0};
+
 protected:
     static constexpr char c_even_value[] = "ping";
     static constexpr char c_odd_value[] = "pong";
@@ -160,6 +168,8 @@ protected:
             begin_transaction();
             {
                 obj.update_payload(new_size, new_value);
+                gaia::common::backoff::spin_wait(
+                    s_txn_delay_us * gaia::common::backoff::c_pause_iterations_per_us);
             }
             commit_transaction();
 
@@ -224,4 +234,37 @@ TEST_F(db__core__concurrent_db_client__test, DISABLED_concurrent_update_throughp
 
         std::cout << num_workers << " " << tps << std::endl;
     }
+}
+
+// Including our own main() function is the only way to pass command-line arguments to gtest.
+int main(int argc, char **argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    // At this point, all gtest command-line arguments have been removed from
+    // `argv`, leaving only `argc` custom arguments.
+    if (argc > 1)
+    {
+        ASSERT_PRECONDITION(argc == 2, "Expected only 1 argument!");
+        char* arg = argv[1];
+
+        // Find position of the delimiter.
+        char* const delim_ptr = std::strchr(arg, '=');
+        ASSERT_POSTCONDITION(delim_ptr && *delim_ptr == '=', "Expected '=' delimiter!");
+
+        // Split the string at the delimiter by overwriting it with the null terminator.
+        *delim_ptr = '\0';
+        const char* name = arg;
+        const char* value = delim_ptr + 1;
+        ASSERT_POSTCONDITION(
+            !strcmp(name, db__core__concurrent_db_client__test::c_arg_name),
+            "Expected argument name '--txn-delay-us'!");
+
+        // Parse the value into an integer.
+        char* value_end{};
+        constexpr int base{10};
+        db__core__concurrent_db_client__test::s_txn_delay_us = std::strtoull(value, &value_end, base);
+        bool failed = (errno == ERANGE);
+        ASSERT_POSTCONDITION(!failed, "Failed to parse value as an integer!");
+    }
+    return RUN_ALL_TESTS();
 }

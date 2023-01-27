@@ -116,6 +116,7 @@ function(add_gtest TARGET SOURCES INCLUDES LIBRARIES)
    message(VERBOSE "ARGV3 = ${ARGV3}")
    message(VERBOSE "ARGV4 = ${ARGV4}")
    message(VERBOSE "ARGV5 = ${ARGV5}")
+   message(VERBOSE "ARGV6 = ${ARGV6}")
 
   add_executable(${TARGET} ${SOURCES})
 

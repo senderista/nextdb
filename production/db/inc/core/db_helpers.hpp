@@ -170,10 +170,13 @@ inline gaia_locator_t id_to_locator(common::gaia_id_t id)
 
 inline gaia_offset_t locator_to_offset(gaia_locator_t locator)
 {
+    if (!locator.is_valid())
+    {
+        return c_invalid_gaia_offset;
+    }
+
     locators_t* locators = gaia::db::get_locators();
-    return locator_exists(locator)
-        ? (*locators)[locator]
-        : c_invalid_gaia_offset;
+    return static_cast<gaia_offset_t>((*locators)[locator]);
 }
 
 inline db_object_t* offset_to_ptr(gaia_offset_t offset)

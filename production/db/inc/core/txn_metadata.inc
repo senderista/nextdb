@@ -294,17 +294,36 @@ void txn_metadata_t::uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t
     // This is a circular buffer, so the logical timestamp range could span up
     // to two distinct physical entry ranges, one starting at the beginning of
     // the buffer and one ending at the end of the buffer.
-    //
-    // REVIEW: Would this be easier if we used the double-mapping trick, so any
-    // logical range within the buffer capacity is equivalent to contiguous
-    // virtual memory?
-    //
-    // FIXME: For now we do the obvious but inefficient thing.
-    ASSERT_PRECONDITION(start_ts < end_ts, "The start timestamp must be older than the end timestamp!");
-    for (gaia_txn_id_t ts = start_ts; ts < end_ts; ++ts)
+    ASSERT_PRECONDITION(
+        start_ts < end_ts,
+        "The start timestamp must be larger than the end timestamp!");
+
+    ASSERT_PRECONDITION(
+        end_ts - start_ts <= c_num_entries,
+        "The timestamp range cannot be larger than the buffer size!");
+
+    auto start_buffer_index = ts_to_buffer_index(start_ts);
+    auto end_buffer_index = ts_to_buffer_index(end_ts);
+
+    // If the physical range is contiguous, we don't need to split it.
+    if (end_buffer_index > start_buffer_index)
     {
-        set_entry(ts, txn_metadata_entry_t::uninitialized_value());
+        void* range_start_ptr = m_txn_metadata_map + start_buffer_index;
+        size_t range_size_bytes = (end_buffer_index - start_buffer_index) * sizeof(*m_txn_metadata_map);
+        std::memset(range_start_ptr, 0, range_size_bytes);
+        return;
     }
+
+    // Otherwise, split the logical range into two physical ranges and zero each separately.
+    ASSERT_INVARIANT(end_buffer_index <= start_buffer_index, "Expected physical range to be split!");
+
+    void* first_range_start_ptr = m_txn_metadata_map;
+    size_t first_range_size_bytes = end_buffer_index * sizeof(*m_txn_metadata_map);
+    std::memset(first_range_start_ptr, 0, first_range_size_bytes);
+
+    void* second_range_start_ptr = m_txn_metadata_map + start_buffer_index;
+    size_t second_range_size_bytes = (c_num_entries - start_buffer_index) * sizeof(*m_txn_metadata_map);
+    std::memset(second_range_start_ptr, 0, second_range_size_bytes);
 }
 
 void txn_metadata_t::dump_txn_metadata_at_ts(gaia_txn_id_t ts)

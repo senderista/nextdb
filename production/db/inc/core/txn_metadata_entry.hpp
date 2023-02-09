@@ -150,7 +150,7 @@ private:
     // This flag indicates whether the txn has been made externally durable
     // (i.e., persisted to the write-ahead log). It can't be combined with the
     // GC flags because a txn might be made durable before or after being
-    // applied to the shared view, and we don't want one to block on the other.
+    // applied to the global snapshot, and we don't want one to block on the other.
     // However, a committed txn's redo versions cannot be reclaimed until it has
     // been marked durable (because they might be concurrently read for
     // persistence to the write-ahead log). If persistence is disabled, this

@@ -93,7 +93,8 @@ public:
     // false otherwise.
     inline bool poll_for_decision(gaia_txn_id_t ts);
 
-    // This uninitializes all entries from start_ts (inclusive) to end_ts (exclusive).
+    // Uninitializes all entries from start_ts (inclusive) to end_ts (exclusive).
+    // This function must be both concurrent and idempotent.
     inline void uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
 
     inline void dump_txn_metadata_at_ts(gaia_txn_id_t ts);

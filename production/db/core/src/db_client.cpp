@@ -1082,9 +1082,9 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 // reasoning, we define a set of "watermarks": upper or lower bounds on the
 // endpoint of a sequence of txns with some property. There are currently four
 // watermarks defined: the "pre-apply" watermark, which serves as an upper bound
-// on the last committed txn which was fully applied to the shared view; the
+// on the last committed txn which was fully applied to the global snapshot; the
 // "post-apply" watermark, which serves as a lower bound on the last committed
-// txn which was fully applied to the shared view; the "post-GC" watermark,
+// txn which was fully applied to the global snapshot; the "post-GC" watermark,
 // which serves as a lower bound on the last txn to have its resources fully
 // reclaimed (i.e., its txn log and all its undo or redo versions deallocated,
 // for a committed or aborted txn respectively), and the "pre-reclaim"
@@ -1095,9 +1095,9 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 // At a high level, the first pass applies all committed txn logs to the shared
 // view, in order (not concurrently), and advances two watermarks marking an
 // upper bound and lower bound respectively on the timestamp of the latest txn
-// whose redo log has been completely applied to the shared view. The second
+// whose redo log has been completely applied to the global snapshot. The second
 // pass executes GC operations concurrently on all txns which have either
-// aborted or been fully applied to the shared view (and have been durably
+// aborted or been fully applied to the global snapshot (and have been durably
 // logged if persistence is enabled), and sets a flag on each txn when GC is
 // complete. The third pass advances a watermark to the latest txn for which GC
 // has completed for it and all its predecessors (marking a lower bound on the
@@ -1116,11 +1116,11 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 //    advance the post-apply watermark to the same timestamp. (Because we "own"
 //    the current txn metadata after a successful CAS on the pre-apply
 //    watermark, we can advance the post-apply watermark without a CAS.) Because
-//    the pre-apply watermark can only move forward, updates to the shared view
+//    the pre-apply watermark can only move forward, updates to the global snapshot
 //    are applied in timestamp order, and because the pre-apply watermark can only
 //    be advanced if the post-apply watermark has caught up with it (which can
 //    only be the case for a committed commit_ts if the redo log has been fully
-//    applied), updates to the shared view are never applied concurrently.
+//    applied), updates to the global snapshot are never applied concurrently.
 //
 // 2. We scan the interval from a snapshot of the post-GC watermark to a
 //    snapshot of the post-apply watermark. If the current timestamp is not a
@@ -1145,7 +1145,7 @@ bool client_t::do_txn_log_maintenance()
 {
     bool contention_detected = false;
 
-    // Attempt to apply all txn logs to the shared view, from the last value of
+    // Attempt to apply all txn logs to the global snapshot, from the last value of
     // the post-apply watermark to the latest committed txn.
     contention_detected |= apply_txn_logs_to_shared_view();
 
@@ -1237,7 +1237,7 @@ bool client_t::apply_txn_logs_to_shared_view()
 
         // We can only advance the pre-apply watermark if the post-apply
         // watermark has caught up to it (this ensures that txn logs cannot be
-        // applied concurrently to the shared view; they are already applied in
+        // applied concurrently to the global snapshot; they are already applied in
         // order because the pre-apply watermark advances in order). This is
         // exactly equivalent to a lock implemented by a CAS attempting to set a
         // boolean. When a thread successfully advances the pre-apply watermark,
@@ -1300,11 +1300,10 @@ bool client_t::apply_txn_logs_to_shared_view()
             if (ts_entry.is_committed())
             {
                 // If a new txn starts after or while we apply this txn log to
-                // the shared view, but before we advance the post-apply
-                // watermark, it will re-apply some of our updates to its
-                // snapshot of the shared view, but that is benign because log
-                // replay is idempotent (as long as logs are applied in
-                // timestamp order).
+                // the global snapshot, but before we advance the post-apply
+                // watermark, it will re-apply some of our updates to its local
+                // snapshot, but that is benign because log replay is idempotent
+                // (as long as logs are applied in timestamp order).
                 apply_txn_log_from_ts_and_offset(ts, ts_entry.get_log_offset());
             }
         }
@@ -1572,11 +1571,34 @@ bool client_t::update_pre_reclaim_watermark()
     auto reserved_ts = get_safe_ts_entries()->get_reserved_ts(safe_ts_entries_index());
     ASSERT_PRECONDITION(!reserved_ts.is_valid(), "Expected any reserved safe_ts to be released!");
 
+    // Get a snapshot of the post-reclaim watermark to compare to the pre-reclaim watermark.
+    gaia_txn_id_t old_post_reclaim_watermark = get_watermarks()->get_watermark(watermark_type_t::post_reclaim);
+
     // Get a snapshot of the pre-reclaim watermark before advancing it.
     gaia_txn_id_t old_pre_reclaim_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
 
+    ASSERT_INVARIANT(
+        old_pre_reclaim_watermark >= old_post_reclaim_watermark,
+        "The pre-reclaim watermark must be at least as recent as the post-reclaim watermark!");
+
+    // Abort if the post-reclaim watermark has not caught up to the pre-reclaim
+    // watermark, because this means that memory reclamation is already in
+    // progress (and may or may not be completed).
+    // NB: This condition does not actually guarantee mutual exclusion, because
+    // two concurrent threads may observe the equality condition but then
+    // "leapfrog" each other advancing the pre-reclaim watermark (causing the
+    // slower thread to later fail to advance the post-reclaim watermark).
+    // Therefore, the mechanism responsible for reinitializing txn metadata
+    // memory must still be concurrent and idempotent.
+    if (old_post_reclaim_watermark != old_pre_reclaim_watermark)
+    {
+        // Contention was detected.
+        return true;
+    }
+
     // The post-GC watermark is an upper bound on the pre-reclaim watermark, so
-    // don't bother computing a safe reclamation timestamp if they're equal.
+    // don't bother computing a safe reclamation timestamp if they're within a
+    // threshold distance.
     gaia_txn_id_t post_gc_watermark = get_watermarks()->get_watermark(watermark_type_t::post_gc);
     ASSERT_INVARIANT(
         post_gc_watermark >= old_pre_reclaim_watermark,
@@ -1600,14 +1622,6 @@ bool client_t::update_pre_reclaim_watermark()
         return false;
     }
 
-    // Before trying to advance the pre-reclaim watermark, zero out all memory
-    // between the old and new pre-reclaim watermark, so it is uninitialized on
-    // next use. We need to do this before advancing the watermark, because
-    // otherwise we could allocate a timestamp entry in the newly reclaimed
-    // region that had not been properly uninitialized.
-    get_txn_metadata()->uninitialize_ts_range(old_pre_reclaim_watermark, new_pre_reclaim_watermark);
-
-    // Try to advance the pre-reclaim watermark.
     if (!get_watermarks()->advance_watermark(watermark_type_t::pre_reclaim, new_pre_reclaim_watermark))
     {
         // Abort if another thread has concurrently advanced the
@@ -1617,6 +1631,22 @@ bool client_t::update_pre_reclaim_watermark()
             "The watermark must have advanced if advance_watermark() failed!");
 
         // Contention was detected.
+        return true;
+    }
+
+    // We successfully advanced the pre-reclaim watermark, so we can reclaim
+    // memory without contention. Zero out all memory between the old and new
+    // pre-reclaim watermark, so it is uninitialized on next use.
+    get_txn_metadata()->uninitialize_ts_range(old_pre_reclaim_watermark, new_pre_reclaim_watermark);
+
+    // Now advance the post-reclaim watermark, so we know that all timestamps
+    // before it correspond to metadata entries that are safe to reuse.
+    if (!get_watermarks()->advance_watermark(
+        watermark_type_t::post_reclaim, new_pre_reclaim_watermark))
+    {
+        // If another thread concurrently advanced the post-reclaim watermark,
+        // it must have been concurrently reclaiming memory, so report
+        // contention.
         return true;
     }
 

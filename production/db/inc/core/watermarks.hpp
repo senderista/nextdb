@@ -12,37 +12,42 @@ namespace gaia
 {
 namespace db
 {
-// These global timestamp variables are "watermarks" that represent the
-// progress of various system functions with respect to transaction history.
-// The "pre-apply" watermark represents an upper bound on the latest
-// commit_ts whose txn log could have been applied to the shared locator
-// view. A committed txn cannot have its txn log applied to the shared view
-// until the pre-apply watermark has been advanced to its commit_ts. The
-// "post-apply" watermark represents a lower bound on the same quantity, and
-// also an upper bound on the latest commit_ts whose txn log could be
-// eligible for GC. GC cannot be started for any committed txn until the
-// post-apply watermark has advanced to its commit_ts. The "post-GC"
-// watermark represents a lower bound on the latest commit_ts whose txn log
-// could have had GC reclaim all its resources. Finally, the "pre-reclaim"
-// watermark represents an (exclusive) upper bound on the timestamps whose
-// metadata entries could have had their memory reclaimed (e.g., via
-// zeroing, unmapping, or overwriting). Any timestamp whose metadata entry
-// could potentially be dereferenced must be "reserved" via the "safe_ts"
-// API to prevent the pre-reclaim watermark from advancing past it and
-// allowing its metadata entry to be reclaimed.
+// These global timestamp variables are "watermarks" that represent the progress
+// of various system functions with respect to transaction history. The
+// "pre-apply" watermark represents an upper bound on the latest commit_ts whose
+// txn log could have been applied to the shared locator view. A committed txn
+// cannot have its txn log applied to the global snapshot until the pre-apply
+// watermark has been advanced to its commit_ts. The "post-apply" watermark
+// represents a lower bound on the same quantity, and also an upper bound on the
+// latest commit_ts whose txn log could be eligible for GC. GC cannot be started
+// for any committed txn until the post-apply watermark has advanced to its
+// commit_ts. The "post-GC" watermark represents a lower bound on the latest
+// commit_ts whose txn log could have had GC reclaim all its resources. The
+// "pre-reclaim" watermark represents an (exclusive) upper bound on the
+// timestamps whose metadata entries could have had their memory reclaimed
+// (e.g., via zeroing, unmapping, or overwriting). Any timestamp whose metadata
+// entry could potentially be dereferenced must be "reserved" via the "safe_ts"
+// API to prevent the pre-reclaim watermark from advancing past it and allowing
+// its metadata entry to be reclaimed. Finally, the "post-reclaim" watermark
+// represents an (exclusive) upper bound on the timestamps whose metadata
+// entries have had their memory fully reclaimed, so it is eligible for reuse.
 //
 // The pre-apply watermark must either be equal to the post-apply watermark or greater by 1.
 //
 // Schematically:
-//    commit timestamps of transactions whose metadata entries have been reclaimed
-//  < pre-reclaim watermark
-//    <= commit timestamps of transactions completely garbage-collected
+// post-reclaim watermark
+//    > timestamps whose metadata entries can be safely reused
+// <= pre-reclaim watermark
+//    > timestamps whose metadata entries cannot be safely accessed
 // <= post-GC watermark
-//    <= commit timestamps of transactions applied to shared view
+//    >= commit timestamps of completely garbage-collected transactions,
+//    < commit timestamps of transactions applied to global snapshot but possibly not garbage-collected
 // <= post-apply watermark
-//    < commit timestamp of transaction partially applied to shared view
+//    >= commit timestamps of transactions fully applied to global snapshot,
+//    < commit timestamps of transactions partially applied to global snapshot
 // <= pre-apply watermark
-//    < commit timestamps of transactions not applied to shared view.
+//    >= commit timestamps of transactions partially applied to global snapshot,
+//    < commit timestamps of transactions not applied to global snapshot.
 
 enum class watermark_type_t
 {
@@ -50,6 +55,7 @@ enum class watermark_type_t
     post_apply,
     post_gc,
     pre_reclaim,
+    post_reclaim,
     // This should always be last.
     count
 };

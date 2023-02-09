@@ -52,18 +52,18 @@ inline common::gaia_id_t allocate_id()
     return static_cast<common::gaia_id_t::value_type>(new_id);
 }
 
-// This returns the smallest allocated timestamp that can be safely accessed.
+// This returns the oldest allocated timestamp that can be safely accessed.
 inline gaia_txn_id_t get_first_safe_allocated_ts()
 {
     // This needs to be a seq_cst load because we assert on it for all txn
     // metadata map accesses.
     // The pre-reclaim watermark is an exclusive upper bound on the timestamp
-    // range that may have been reclaimed, so its value represents the first
+    // range that may have been reclaimed, so its value represents the oldest
     // timestamp entry that is safe to access.
     return get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
 }
 
-// This returns the largest unallocated timestamp that can be allocated
+// This returns the newest unallocated timestamp that can be allocated
 // without overwriting entries that are possibly in use.
 inline gaia_txn_id_t get_last_safe_unallocated_ts()
 {
@@ -71,15 +71,15 @@ inline gaia_txn_id_t get_last_safe_unallocated_ts()
     // REVIEW: False positives could cause unnecessary asserts or unrecoverable
     // exceptions to be thrown!
     // bool relaxed_load = true;
-    // gaia_txn_id_t pre_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim, relaxed_load);
-    gaia_txn_id_t pre_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
+    // gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::post_reclaim, relaxed_load);
+    gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::post_reclaim);
 
     // Timestamp allocation wraps around the buffer until it reaches the index
-    // corresponding to the pre-reclaim watermark, so we just add the buffer
+    // corresponding to the post-reclaim watermark, so we just add the buffer
     // size to the watermark to get the last safe timestamp index.
-    // The pre-reclaim watermark is an exclusive upper bound on the timestamp
+    // The post-reclaim watermark is an exclusive upper bound on the timestamp
     // range that may have been reclaimed, so we need to subtract 1.
-    return pre_reclaim_watermark_lower_bound + transactions::txn_metadata_t::c_num_entries - 1;
+    return post_reclaim_watermark_lower_bound + transactions::txn_metadata_t::c_num_entries - 1;
 }
 
 inline gaia_txn_id_t allocate_txn_id()

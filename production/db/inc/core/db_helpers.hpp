@@ -130,10 +130,14 @@ inline gaia_locator_t allocate_locator(common::gaia_type_t type)
     return new_locator;
 }
 
-inline void update_locator(gaia_locator_t locator, gaia_offset_t offset)
+// REVIEW: Would a relaxed store option be useful for optimizations?
+inline void update_locator(gaia_locator_t locator, gaia_offset_t offset, locators_t* locators = nullptr)
 {
-    locators_t* locators = gaia::db::get_locators();
-    (*locators)[locator] = offset;
+    if (!locators)
+    {
+        locators = gaia::db::get_locators();
+    }
+    (*locators)[locator].store(offset);
 }
 
 inline gaia_locator_t get_last_locator()
@@ -148,14 +152,6 @@ inline gaia_locator_t get_last_locator()
     return static_cast<gaia_locator_t>(last_locator_value);
 }
 
-inline bool locator_exists(gaia_locator_t locator)
-{
-    locators_t* locators = gaia::db::get_locators();
-    return (locator.is_valid())
-        && (locator <= get_last_locator())
-        && ((*locators)[locator] != c_invalid_gaia_offset);
-}
-
 // Returns true if ID was not already registered, false otherwise.
 inline bool register_locator_for_id(
     common::gaia_id_t id, gaia_locator_t locator)
@@ -168,6 +164,7 @@ inline gaia_locator_t id_to_locator(common::gaia_id_t id)
     return id.is_valid() ? gaia::db::db_hash_map::find(id) : c_invalid_gaia_locator;
 }
 
+// REVIEW: Would a relaxed load option be useful for optimizations?
 inline gaia_offset_t locator_to_offset(gaia_locator_t locator)
 {
     if (!locator.is_valid())
@@ -176,7 +173,7 @@ inline gaia_offset_t locator_to_offset(gaia_locator_t locator)
     }
 
     locators_t* locators = gaia::db::get_locators();
-    return static_cast<gaia_offset_t>((*locators)[locator]);
+    return (*locators)[locator].load();
 }
 
 inline db_object_t* offset_to_ptr(gaia_offset_t offset)
@@ -190,6 +187,13 @@ inline db_object_t* offset_to_ptr(gaia_offset_t offset)
 inline db_object_t* locator_to_ptr(gaia_locator_t locator)
 {
     return offset_to_ptr(locator_to_offset(locator));
+}
+
+inline bool locator_exists(gaia_locator_t locator)
+{
+    return (locator.is_valid())
+        && (locator <= get_last_locator())
+        && locator_to_offset(locator).is_valid();
 }
 
 inline db_object_t* id_to_ptr(common::gaia_id_t id)
@@ -217,7 +221,7 @@ inline void apply_log_to_locators(locators_t* locators, txn_log_t* txn_log,
     {
         auto log_record = &(txn_log->log_records[i]);
         auto offset_to_apply = apply_new_versions ? log_record->new_offset : log_record->old_offset;
-        (*locators)[log_record->locator] = offset_to_apply;
+        update_locator(log_record->locator, offset_to_apply, locators);
     }
 }
 

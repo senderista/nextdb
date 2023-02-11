@@ -54,10 +54,9 @@ gaia_ptr_t gaia_ptr_t::from_gaia_id(
 
 void gaia_ptr_t::reset()
 {
-    locators_t* locators = get_locators();
     client_t::log_txn_operation(m_locator, to_offset(), c_invalid_gaia_offset);
 
-    (*locators)[m_locator] = c_invalid_gaia_offset;
+    update_locator(m_locator, c_invalid_gaia_offset);
     m_locator = c_invalid_gaia_locator;
 }
 

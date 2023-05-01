@@ -103,7 +103,7 @@ chunk_offset_t memory_manager_t::allocate_unused_chunk()
                 && next_chunk_offset <= c_last_chunk_offset,
             "next_chunk_offset is out of range!");
 
-        auto allocated_chunk_offset = static_cast<chunk_offset_t>(next_chunk_offset);
+        auto allocated_chunk_offset = static_cast<chunk_offset_t::value_type>(next_chunk_offset);
 
         // Now try to claim this chunk.
         chunk_manager_t chunk_manager;
@@ -156,7 +156,7 @@ chunk_offset_t memory_manager_t::allocate_used_chunk()
                 && found_index <= c_last_chunk_offset,
             "Index returned by find_first_unset_bit() is outside expected range!");
 
-        auto available_chunk_offset = static_cast<chunk_offset_t>(found_index);
+        auto available_chunk_offset = static_cast<chunk_offset_t::value_type>(found_index);
         chunk_manager_t chunk_manager;
         // NB: We cannot call initialize() here because we don't own the chunk yet!
         chunk_manager.load(available_chunk_offset);

@@ -168,7 +168,7 @@ log_offset_t logs_t::allocate_used_log_offset()
                 std::size(m_allocated_log_offsets_bitmap),
                 first_unallocated_index, true, fail_if_already_set))
         {
-            allocated_offset = static_cast<log_offset_t>(first_unallocated_index);
+            allocated_offset = static_cast<log_offset_t::value_type>(first_unallocated_index);
             break;
         }
 
@@ -210,7 +210,7 @@ log_offset_t logs_t::allocate_unused_log_offset()
                 std::size(m_allocated_log_offsets_bitmap),
                 next_offset, true, fail_if_already_set))
         {
-            return static_cast<log_offset_t>(next_offset);
+            return static_cast<log_offset_t::value_type>(next_offset);
         }
     }
 }

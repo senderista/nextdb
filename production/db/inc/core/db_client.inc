@@ -69,7 +69,7 @@ txn_log_t* client_t::txn_log()
         s_session_context->txn_context.txn_log_offset.is_valid(),
         "Invalid txn log offset!");
 
-    return get_logs()->get_log_from_offset(s_session_context->txn_context.txn_log_offset);
+    return s_session_context->shared_logs.data()->get_log_from_offset(s_session_context->txn_context.txn_log_offset);
 }
 
 chunk_offset_t client_t::chunk_offset()

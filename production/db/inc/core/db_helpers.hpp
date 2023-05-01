@@ -49,7 +49,7 @@ inline common::gaia_id_t allocate_id()
         new_id <= std::numeric_limits<common::gaia_id_t::value_type>::max(),
         "Gaia ID exceeds allowed range!");
 
-    return static_cast<common::gaia_id_t>(new_id);
+    return static_cast<common::gaia_id_t::value_type>(new_id);
 }
 
 // This returns the smallest allocated timestamp that can be safely accessed.
@@ -109,7 +109,7 @@ inline gaia_txn_id_t allocate_txn_id()
             gaia::db::get_txn_metadata()->is_sealed_ts(new_txn_id),
         "Any newly allocated timestamp entry must be uninitialized or sealed!");
 
-    return static_cast<gaia_txn_id_t>(new_txn_id);
+    return static_cast<gaia_txn_id_t::value_type>(new_txn_id);
 }
 
 inline gaia_locator_t allocate_locator(common::gaia_type_t type)
@@ -122,7 +122,7 @@ inline gaia_locator_t allocate_locator(common::gaia_type_t type)
     }
 
     auto new_locator_value = ++(counters->last_locator);
-    auto new_locator = static_cast<gaia_locator_t>(new_locator_value);
+    auto new_locator = static_cast<gaia_locator_t::value_type>(new_locator_value);
 
     type_index_t* type_index = get_type_index();
     type_index->add_locator(type, new_locator);
@@ -149,7 +149,7 @@ inline gaia_locator_t get_last_locator()
         last_locator_value <= c_max_locators,
         "Largest locator value exceeds allowed range!");
 
-    return static_cast<gaia_locator_t>(last_locator_value);
+    return static_cast<gaia_locator_t::value_type>(last_locator_value);
 }
 
 // Returns true if ID was not already registered, false otherwise.
@@ -211,7 +211,7 @@ inline gaia_txn_id_t get_last_txn_id()
 {
     counters_t* counters = gaia::db::get_counters();
     // A relaxed load is sufficient because stale values are acceptable.
-    return static_cast<gaia_txn_id_t>(counters->last_txn_id.load(std::memory_order_relaxed));
+    return static_cast<gaia_txn_id_t::value_type>(counters->last_txn_id.load(std::memory_order_relaxed));
 }
 
 inline void apply_log_to_locators(locators_t* locators, txn_log_t* txn_log,

@@ -111,7 +111,7 @@ void chunk_manager_metadata_t::update_last_allocation_metadata(size_t allocation
     // TODO: Use designated initializers after C++20.
     new_metadata.prev_max_allocated_slot_offset = old_metadata.max_allocated_slot_offset;
     new_metadata.max_allocated_slot_offset = old_metadata.min_unallocated_slot_offset;
-    new_metadata.min_unallocated_slot_offset = old_metadata.min_unallocated_slot_offset + allocation_size_in_slots;
+    new_metadata.min_unallocated_slot_offset = static_cast<slot_offset_t::value_type>(old_metadata.min_unallocated_slot_offset + allocation_size_in_slots);
     // Set the new "last allocation metadata" variables in a single atomic write.
     last_allocation_metadata = new_metadata;
 }
@@ -121,7 +121,7 @@ void chunk_manager_metadata_t::update_last_allocation_metadata(size_t allocation
 // it acquires additional callers.
 static inline slot_offset_t bit_index_to_slot(size_t bit_index)
 {
-    return static_cast<slot_offset_t>(bit_index + c_first_slot_offset);
+    return static_cast<slot_offset_t::value_type>(bit_index + c_first_slot_offset);
 }
 
 void chunk_manager_metadata_t::synchronize_allocation_metadata()

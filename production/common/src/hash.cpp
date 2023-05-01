@@ -31,12 +31,12 @@ inline uint32_t rotl32(uint32_t x, uint32_t n)
 }
 
 // Compute murmur3 32 bit hash for the key.
-uint32_t murmur3_32(const void* key, int len)
+uint32_t murmur3_32(const void* key, size_t len)
 {
     auto data = static_cast<const uint8_t*>(key);
-    const int nblocks = len / 4;
+    const size_t nblocks = len / 4;
 
-    uint32_t h1 = len;
+    auto h1 = static_cast<uint32_t>(len);
 
     const uint32_t c1 = 0xcc9e2d51;
     const uint32_t c2 = 0x1b873593;
@@ -46,10 +46,11 @@ uint32_t murmur3_32(const void* key, int len)
 
     auto blocks = reinterpret_cast<const uint32_t*>(data + nblocks * 4);
 
-    for (int i = -nblocks; i; i++)
+    for (size_t i = 0; i < nblocks; i++)
     {
+        const uint32_t* ptr = blocks - (nblocks - i);
         uint32_t k1;
-        std::memcpy(&k1, (blocks + i), sizeof(k1));
+        std::memcpy(&k1, ptr, sizeof(k1));
 
         // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers)
         k1 *= c1;
@@ -101,6 +102,7 @@ uint32_t murmur3_32(const void* key, int len)
     return h1;
 }
 
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define BIG_CONSTANT(x) (x##LLU)
 
 inline uint64_t rotl64(uint64_t x, int8_t r)
@@ -123,11 +125,11 @@ inline uint64_t fmix64(uint64_t k)
 }
 
 // Compute murmur3 128 bit hash for the key.
-void multi_segment_hash::murmur3_128(const void* key, const int len, void* out)
+void multi_segment_hash::murmur3_128(const void* key, const size_t len, void* out)
 {
     auto data = static_cast<const uint8_t*>(key);
 
-    const int nblocks = len / c_murmur3_128_hash_size_in_bytes;
+    const size_t nblocks = len / c_murmur3_128_hash_size_in_bytes;
 
     uint64_t h1 = len;
     uint64_t h2 = len;
@@ -141,7 +143,7 @@ void multi_segment_hash::murmur3_128(const void* key, const int len, void* out)
     auto blocks = reinterpret_cast<const uint64_t*>(data);
 
     // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers)
-    for (int i = 0; i < nblocks; i++)
+    for (size_t i = 0; i < nblocks; i++)
     {
         uint64_t k1;
         uint64_t k2;
@@ -236,7 +238,7 @@ void multi_segment_hash::murmur3_128(const void* key, const int len, void* out)
     h1 += h2;
     h2 += h1;
 
-    uint8_t* result = static_cast<uint8_t*>(out);
+    auto result = static_cast<uint8_t*>(out);
     std::memcpy(result, &h1, sizeof(uint64_t));
     std::memcpy(result + sizeof(uint64_t), &h2, sizeof(uint64_t));
 }

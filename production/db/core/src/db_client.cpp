@@ -71,7 +71,7 @@ int client_t::get_session_socket(const std::string& socket_name)
 
     // The socket name is not null-terminated in the address structure, but
     // we need to add an extra byte for the null byte prefix.
-    socklen_t server_addr_size = sizeof(server_addr.sun_family) + 1 + strlen(&server_addr.sun_path[1]);
+    auto server_addr_size = static_cast<socklen_t>(sizeof(server_addr.sun_family) + 1 + strlen(&server_addr.sun_path[1]));
     if (-1 == ::connect(session_socket, reinterpret_cast<sockaddr*>(&server_addr), server_addr_size))
     {
         throw_system_error("Connect failed!");
@@ -523,6 +523,8 @@ void client_t::commit_transaction()
         contention_detected |= update_pre_reclaim_watermark();
         // REVIEW: We formerly backed off on detecting contention, but removed
         // backoff after other changes neutralized its effect on throughput.
+        // REVIEW: Remove this dummy cast when we use the variable again.
+        (void)contention_detected;
     });
 
     // Before registering the log, sort by locator for fast conflict detection.

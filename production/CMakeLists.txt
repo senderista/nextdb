@@ -109,8 +109,9 @@ if(CCACHE_FOUND AND NOT DISABLE_CCACHE)
 endif()
 
 # Default compiler/linker flags for Gaia targets.
+# See https://nullprogram.com/blog/2023/04/29/.
 add_library(gaia_build_options INTERFACE)
-target_compile_options(gaia_build_options INTERFACE -Wall -Wextra -Wunused -Wunreachable-code -ftime-trace)
+target_compile_options(gaia_build_options INTERFACE -Werror -Wall -Wextra -Wunused -Wunreachable-code -Wconversion -Wno-sign-conversion -Wno-float-conversion -Wno-implicit-int-float-conversion -Wdouble-promotion -ftime-trace)
 # Ensure Debug builds have the DEBUG macro defined.
 target_compile_definitions(gaia_build_options INTERFACE $<$<CONFIG:Debug>:DEBUG>)
 # Propagate the DISABLE_ASSERTS option to a macro definition.

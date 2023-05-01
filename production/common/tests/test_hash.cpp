@@ -31,7 +31,7 @@ TEST(common__hash__test, murmur3_32)
     for (size_t i = 0; i < c_test_case_num; i++)
     {
         const char* key = keys[i];
-        int len = static_cast<size_t>(strlen(keys[i]));
+        auto len = static_cast<size_t>(strlen(keys[i]));
         uint32_t value = murmur3_32(key, len);
         ASSERT_EQ(value, expected_hash_values[i]);
     }

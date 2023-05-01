@@ -110,7 +110,7 @@ size_t slot_to_page_index(slot_offset_t slot_offset)
 
 slot_offset_t page_index_to_first_slot_in_page(size_t page_index)
 {
-    return (page_index * common::c_uint64_bit_count) + c_first_slot_offset;
+    return static_cast<slot_offset_t::value_type>((page_index * common::c_uint64_bit_count) + c_first_slot_offset);
 }
 
 void write_protect_allocation_page_for_offset(gaia_offset_t offset)

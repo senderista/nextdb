@@ -218,7 +218,7 @@ int server_t::get_listening_socket(const std::string& socket_name)
     // Bind the socket to the address and start listening for connections.
     // The socket name is not null-terminated in the address structure, but
     // we need to add an extra byte for the null byte prefix.
-    socklen_t server_addr_size = sizeof(server_addr.sun_family) + 1 + ::strlen(&server_addr.sun_path[1]);
+    auto server_addr_size = static_cast<socklen_t>(sizeof(server_addr.sun_family) + 1 + ::strlen(&server_addr.sun_path[1]));
     if (-1 == ::bind(listening_socket, reinterpret_cast<struct sockaddr*>(&server_addr), server_addr_size))
     {
         // REVIEW: Identify other common errors that should have user-friendly error messages.

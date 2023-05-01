@@ -36,7 +36,7 @@ namespace hash
  * Warning: murmur3 is not a cryptographic hash function and should not be used
  * in places where security is a concern.
  */
-uint32_t murmur3_32(const void* key, int len);
+uint32_t murmur3_32(const void* key, size_t len);
 
 /*
  * Create a composite mash from 1 or more previous 128-bit hashes.
@@ -47,7 +47,7 @@ uint32_t murmur3_32(const void* key, int len);
 class multi_segment_hash
 {
 public:
-    static constexpr int c_murmur3_128_hash_size_in_bytes = 16;
+    static constexpr size_t c_murmur3_128_hash_size_in_bytes = 16;
 
     // Boolean encoding. These values are arbitrary. They just need to be different.
     static constexpr uint8_t bool_true_encoding = 0xdd;
@@ -56,7 +56,7 @@ public:
     /**
      * Compute murmur3 128 bit hash for the key.
      */
-    void murmur3_128(const void* key, const int len, void* out);
+    void murmur3_128(const void* key, const size_t len, void* out);
 
     /**
      * Add a hash to the composite resulting from a key.

@@ -121,7 +121,7 @@ gaia_ptr_t gaia_ptr_t::create_no_txn(gaia_id_t id, gaia_type_t type, size_t data
     db_object_t* obj_ptr = obj.to_ptr();
     obj_ptr->id = id;
     obj_ptr->type = type;
-    obj_ptr->payload_size = data_size;
+    obj_ptr->payload_size = static_cast<uint16_t>(data_size);
     if (data)
     {
         memcpy(obj_ptr->payload, data, data_size);
@@ -159,7 +159,7 @@ void gaia_ptr_t::update_payload_no_txn(size_t data_size, const void* data)
     db_object_t* new_this = to_ptr();
 
     memcpy(new_this, old_this, c_db_object_header_size);
-    new_this->payload_size = data_size;
+    new_this->payload_size = static_cast<uint16_t>(data_size);
     memcpy(new_this->payload, data, data_size);
 }
 

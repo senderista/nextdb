@@ -95,6 +95,18 @@ inline gaia_txn_id_t allocate_txn_id()
         new_txn_id <= get_last_safe_unallocated_ts(),
         "Transaction timestamp entry must be allocated in unused memory!");
 
+    // REVIEW: enable these exceptions once we handle them properly?
+
+    // if (new_txn_id >= (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width))
+    // {
+    //     throw transaction_timestamp_allocation_failure_internal();
+    // }
+
+    // if (new_txn_id > get_last_safe_unallocated_ts())
+    // {
+    //     throw transaction_metadata_allocation_failure_internal();
+    // }
+
 #ifdef DUMP_STATS
     if (new_txn_id % c_dump_stats_timestamp_interval == 0)
     {
@@ -320,16 +332,6 @@ inline gaia_txn_id_t register_begin_ts()
         // Allocate a new begin timestamp.
         begin_ts = allocate_txn_id();
 
-        if (begin_ts >= (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width))
-        {
-            throw transaction_timestamp_allocation_failure_internal();
-        }
-
-        if (begin_ts > get_last_safe_unallocated_ts())
-        {
-            throw transaction_metadata_allocation_failure_internal();
-        }
-
         // The txn metadata must be uninitialized (not sealed).
         transactions::txn_metadata_entry_t expected_value{
             transactions::txn_metadata_entry_t::uninitialized_value()};
@@ -372,16 +374,6 @@ inline gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t
     {
         // Allocate a new commit timestamp.
         commit_ts = allocate_txn_id();
-
-        if (commit_ts >= (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width))
-        {
-            throw transaction_timestamp_allocation_failure_internal();
-        }
-
-        if (commit_ts > get_last_safe_unallocated_ts())
-        {
-            throw transaction_metadata_allocation_failure_internal();
-        }
 
         // The txn metadata must be uninitialized (not sealed).
         transactions::txn_metadata_entry_t expected_value{

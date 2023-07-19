@@ -226,11 +226,8 @@ bool txn_metadata_t::set_txn_gc_complete(gaia_txn_id_t commit_ts)
 
 size_t txn_metadata_t::ts_to_buffer_index(gaia_txn_id_t ts)
 {
-    // FIXME: We can't do this right now without introducing a circular
-    // dependency between txn_metadata.hpp and watermarks.hpp. Best solution
-    // might be to just absorb watermarks_t within txn_metadata_t.
-    // DEBUG_ASSERT_PRECONDITION(ts >= get_first_safe_allocated_ts(), "Timestamp
-    // metadata entry may have been reclaimed!");
+    ASSERT_PRECONDITION(ts >= get_first_safe_allocated_ts(),
+        "Timestamp metadata entry may have been reclaimed!");
 
     // The size is guaranteed to be a power of 2, so we can do modulo reduction
     // with bitwise operations.
@@ -352,4 +349,72 @@ void txn_metadata_t::dump_txn_metadata_at_ts(gaia_txn_id_t ts)
                 << get_entry(commit_ts).dump_metadata();
         }
     }
+}
+
+std::atomic<gaia_txn_id_t::value_type>& txn_metadata_t::get_watermark_entry(watermark_type_t watermark_type)
+{
+    return m_watermarks[common::get_enum_value(watermark_type)].entry;
+}
+
+gaia_txn_id_t txn_metadata_t::get_watermark(watermark_type_t watermark_type, bool relaxed_load)
+{
+    std::memory_order order = relaxed_load ? std::memory_order_relaxed : std::memory_order_seq_cst;
+    return get_watermark_entry(watermark_type).load(order);
+}
+
+// This advances the given global timestamp counter to the given timestamp
+// value, unless it has already advanced beyond the given value due to a
+// concurrent update.
+//
+// NB: we use compare_exchange_weak() for the global update because we need to
+// retry anyway on concurrent updates, so tolerating spurious failures
+// requires no additional logic.
+bool txn_metadata_t::advance_watermark(watermark_type_t watermark_type, gaia_txn_id_t ts)
+{
+    // The initial load can be relaxed, because a stale read will just cause the
+    // CAS to fail and retry. If the given timestamp is less than or equal to a
+    // stale value of the watermark, it will transitively be less than the
+    // current value of the watermark, so the early return logic is still
+    // correct.
+    bool relaxed_load = true;
+    gaia_txn_id_t last_watermark_ts = get_watermark(watermark_type, relaxed_load);
+    do
+    {
+        // NB: last_watermark_ts is an inout argument holding the previous value
+        // on failure!
+        if (ts <= last_watermark_ts)
+        {
+            return false;
+        }
+
+    } while (!get_watermark_entry(watermark_type).compare_exchange_weak(last_watermark_ts.value_ref(), ts.value()));
+
+    return true;
+}
+
+gaia_txn_id_t txn_metadata_t::get_first_safe_allocated_ts()
+{
+    // This needs to be a seq_cst load because we assert on it for all txn
+    // metadata map accesses.
+    // The pre-reclaim watermark is an exclusive upper bound on the timestamp
+    // range that may have been reclaimed, so its value represents the oldest
+    // timestamp entry that is safe to access.
+    return get_watermark(watermark_type_t::pre_reclaim);
+}
+
+gaia_txn_id_t txn_metadata_t::get_last_safe_unallocated_ts()
+{
+    // A relaxed load is safe since it will always lag the current value.
+    // REVIEW: False positives could cause unnecessary asserts or unrecoverable
+    // exceptions to be thrown!
+    // bool relaxed_load = true;
+    // gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermark(watermark_type_t::post_reclaim, relaxed_load);
+    gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermark(watermark_type_t::post_reclaim);
+
+    // Timestamp allocation wraps around the buffer until it reaches the index
+    // corresponding to the post-reclaim watermark, so we just add the buffer
+    // size to the watermark to get the last safe timestamp index.
+    // The post-reclaim watermark is an exclusive upper bound on the timestamp
+    // range that may have been reclaimed, so we need to subtract 1.
+    return post_reclaim_watermark_lower_bound + c_num_entries - 1;
 }

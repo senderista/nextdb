@@ -51,7 +51,6 @@ class client_t
     friend gaia::db::id_index_t* gaia::db::get_id_index();
     friend gaia::db::type_index_t* gaia::db::get_type_index();
     friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
-    friend gaia::db::watermarks_t* get_watermarks();
     friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
@@ -157,7 +156,7 @@ private:
     static bool is_protected_ts(gaia_txn_id_t ts);
 
     // Asserts that the watermark is protected by a reserved safe_ts.
-    static gaia_txn_id_t get_safe_watermark(watermark_type_t watermark_type);
+    static gaia_txn_id_t get_safe_watermark(transactions::watermark_type_t watermark_type);
 };
 
 #include "db_client.inc"

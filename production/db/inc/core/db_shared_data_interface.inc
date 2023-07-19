@@ -29,9 +29,6 @@ static inline gaia::db::type_index_t* get_type_index();
 // Returns a pointer to a mapping of the "txn_metadata" shared memory segment.
 static inline gaia::db::transactions::txn_metadata_t* get_txn_metadata();
 
-// Returns a pointer to a mapping of the "watermarks" shared memory segment.
-static inline gaia::db::watermarks_t* get_watermarks();
-
 // Returns a pointer to a mapping of the "safe_ts_entries" shared memory segment.
 static inline gaia::db::safe_ts_entries_t* get_safe_ts_entries();
 

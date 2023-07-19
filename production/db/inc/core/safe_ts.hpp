@@ -18,7 +18,7 @@
 #include "gaia_internal/exceptions.hpp"
 
 #include "db_internal_types.hpp"
-#include "watermarks.hpp"
+#include "txn_metadata.hpp"
 
 namespace gaia
 {
@@ -54,7 +54,7 @@ public:
     //
     // Returns true if the given timestamp was successfully reserved, false
     // otherwise.
-    inline bool reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, watermarks_t* watermarks);
+    inline bool reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, transactions::txn_metadata_t* txn_metadata);
 
     // Releases the "safe timestamp" previously reserved at the given index,
     // allowing the pre-reclaim watermark to advance past it, signaling to GC
@@ -62,7 +62,7 @@ public:
     // reclamation.
     //
     // This method cannot fail or throw.
-    inline void release_safe_ts(size_t index, watermarks_t* watermarks);
+    inline void release_safe_ts(size_t index, transactions::txn_metadata_t* txn_metadata);
 
     // Returns the reserved safe_ts at the given index, or the invalid timestamp
     // if no safe_ts is reserved.
@@ -75,7 +75,7 @@ public:
     // that was reserved before this method was called. For safety, callers must
     // avoid accessing txn metadata older than a previously reserved "safe
     // timestamp".
-    inline gaia_txn_id_t get_safe_reclamation_ts(watermarks_t* watermarks);
+    inline gaia_txn_id_t get_safe_reclamation_ts(transactions::txn_metadata_t* txn_metadata);
 
 private:
     // A global array in which each session thread publishes a "safe timestamp"

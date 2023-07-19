@@ -70,14 +70,6 @@ static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
     return gaia::db::server_t::s_shared_txn_metadata.data();
 }
 
-static gaia::db::watermarks_t* get_watermarks()
-{
-    // The watermarks segment should always be mapped whenever any callers
-    // of this method are able to observe it.
-    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_watermarks.is_set(), "Server watermarks segment is unmapped!");
-    return gaia::db::server_t::s_shared_watermarks.data();
-}
-
 static gaia::db::safe_ts_entries_t* get_safe_ts_entries()
 {
     // The safe_ts_entries segment should always be mapped whenever any callers

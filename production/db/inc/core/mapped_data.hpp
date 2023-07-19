@@ -132,7 +132,6 @@ struct data_mapping_t
         id_index,
         type_index,
         txn_metadata,
-        watermarks,
         safe_ts_entries,
 
         // This must be kept the last enum value.

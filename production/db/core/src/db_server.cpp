@@ -133,11 +133,11 @@ void server_t::init_txn_history()
     get_txn_metadata()->set_txn_durable(initial_commit_ts);
     // There was no log associated with the initial txn, so assume GC is complete.
     get_txn_metadata()->set_txn_gc_complete(initial_commit_ts);
-    // Finally, advance all watermarks (except the pre-reclaim watermark) to
-    // the initial commit_ts.
-    get_watermarks()->advance_watermark(watermark_type_t::pre_apply, initial_commit_ts);
-    get_watermarks()->advance_watermark(watermark_type_t::post_apply, initial_commit_ts);
-    get_watermarks()->advance_watermark(watermark_type_t::post_gc, initial_commit_ts);
+    // Finally, advance all watermarks (except the pre- and post-reclaim
+    // watermarks) to the initial commit_ts.
+    get_txn_metadata()->advance_watermark(watermark_type_t::pre_apply, initial_commit_ts);
+    get_txn_metadata()->advance_watermark(watermark_type_t::post_apply, initial_commit_ts);
+    get_txn_metadata()->advance_watermark(watermark_type_t::post_gc, initial_commit_ts);
 
     // Assert desired state.
     ASSERT_POSTCONDITION(get_txn_metadata()->is_txn_submitted(initial_begin_ts),
@@ -152,11 +152,11 @@ void server_t::init_txn_history()
         "Initial txn's commit_ts should be durable!");
     ASSERT_POSTCONDITION(get_txn_metadata()->is_txn_gc_complete(initial_commit_ts),
         "Initial txn's commit_ts should be GC-complete!");
-    ASSERT_POSTCONDITION(get_watermarks()->get_watermark(watermark_type_t::pre_apply) == initial_commit_ts,
+    ASSERT_POSTCONDITION(get_txn_metadata()->get_watermark(watermark_type_t::pre_apply) == initial_commit_ts,
         "Pre-apply watermark should be equal to initial txn's commit_ts!");
-    ASSERT_POSTCONDITION(get_watermarks()->get_watermark(watermark_type_t::post_apply) == initial_commit_ts,
+    ASSERT_POSTCONDITION(get_txn_metadata()->get_watermark(watermark_type_t::post_apply) == initial_commit_ts,
         "Post-apply watermark should be equal to initial txn's commit_ts!");
-    ASSERT_POSTCONDITION(get_watermarks()->get_watermark(watermark_type_t::post_gc) == initial_commit_ts,
+    ASSERT_POSTCONDITION(get_txn_metadata()->get_watermark(watermark_type_t::post_gc) == initial_commit_ts,
         "Post-GC watermark should be equal to initial txn's commit_ts!");
 }
 

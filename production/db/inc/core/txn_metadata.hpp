@@ -22,7 +22,6 @@
 
 #include "db_internal_types.hpp"
 #include "txn_metadata_entry.hpp"
-#include "watermarks.hpp"
 
 namespace gaia
 {
@@ -30,6 +29,54 @@ namespace db
 {
 namespace transactions
 {
+
+// These global timestamp variables are "watermarks" that represent the progress
+// of various system functions with respect to transaction history. The
+// "pre-apply" watermark represents an upper bound on the latest commit_ts whose
+// txn log could have been applied to the shared locator view. A committed txn
+// cannot have its txn log applied to the global snapshot until the pre-apply
+// watermark has been advanced to its commit_ts. The "post-apply" watermark
+// represents a lower bound on the same quantity, and also an upper bound on the
+// latest commit_ts whose txn log could be eligible for GC. GC cannot be started
+// for any committed txn until the post-apply watermark has advanced to its
+// commit_ts. The "post-GC" watermark represents a lower bound on the latest
+// commit_ts whose txn log could have had GC reclaim all its resources. The
+// "pre-reclaim" watermark represents an (exclusive) upper bound on the
+// timestamps whose metadata entries could have had their memory reclaimed
+// (e.g., via zeroing, unmapping, or overwriting). Any timestamp whose metadata
+// entry could potentially be dereferenced must be "reserved" via the "safe_ts"
+// API to prevent the pre-reclaim watermark from advancing past it and allowing
+// its metadata entry to be reclaimed. Finally, the "post-reclaim" watermark
+// represents an (exclusive) upper bound on the timestamps whose metadata
+// entries have had their memory fully reclaimed, so it is eligible for reuse.
+//
+// The pre-apply watermark must either be equal to the post-apply watermark or greater by 1.
+//
+// Schematically:
+// post-reclaim watermark
+//    > timestamps whose metadata entries can be safely reused
+// <= pre-reclaim watermark
+//    > timestamps whose metadata entries cannot be safely accessed
+// <= post-GC watermark
+//    >= commit timestamps of completely garbage-collected transactions,
+//    < commit timestamps of transactions applied to global snapshot but possibly not garbage-collected
+// <= post-apply watermark
+//    >= commit timestamps of transactions fully applied to global snapshot,
+//    < commit timestamps of transactions partially applied to global snapshot
+// <= pre-apply watermark
+//    >= commit timestamps of transactions partially applied to global snapshot,
+//    < commit timestamps of transactions not applied to global snapshot.
+
+enum class watermark_type_t
+{
+    pre_apply,
+    post_apply,
+    post_gc,
+    pre_reclaim,
+    post_reclaim,
+    // This should always be last.
+    count
+};
 
 // This class encapsulates the txn metadata array. It handles all reads, writes,
 // and synchronization on the metadata array, but has no knowledge of the
@@ -63,14 +110,23 @@ public:
     inline void set_txn_durable(gaia_txn_id_t commit_ts);
     inline bool set_txn_gc_complete(gaia_txn_id_t commit_ts);
 
-    // This is designed for implementing "fences" that can guarantee no thread can
-    // ever claim a timestamp, by marking that timestamp permanently sealed. Sealing
-    // can only be performed on an "uninitialized" metadata entry, not on any valid
-    // metadata entry. When a session thread beginning or committing a txn finds
-    // that its begin_ts or commit_ts has been sealed upon initializing the metadata
-    // entry for that timestamp, it simply allocates another timestamp and retries.
-    // This is possible because we never publish a newly allocated timestamp until
-    // we know that its metadata entry has been successfully initialized.
+    // This is designed for implementing "fences" that can guarantee no thread
+    // can ever claim a timestamp, by marking that timestamp permanently sealed.
+    // Sealing can only be performed on an "uninitialized" metadata entry, not
+    // on any valid metadata entry. When a session thread beginning or
+    // committing a txn finds that its begin_ts or commit_ts has been sealed
+    // upon initializing the metadata entry for that timestamp, it simply
+    // allocates another timestamp and retries. This is possible because we
+    // never publish a newly allocated timestamp until we know that its metadata
+    // entry has been successfully initialized.
+    //
+    // The motivation is to ensure that a suspended thread (suspended between
+    // when it allocates a new timestamp and when it initializes that
+    // timestamp's entry) cannot prevent the progress of other threads. When
+    // another thread encounters the still-uninitialized timestamp, it will
+    // simply seal it and continue. When the suspended thread resumes and
+    // attempts to initialize its now-sealed timestamp entry, initialization
+    // will fail and it must retry with a new timestamp.
     inline bool seal_uninitialized_ts(gaia_txn_id_t ts);
 
     // Returns the txn metadata entry at the given timestamp.
@@ -98,7 +154,15 @@ public:
     // This function must be both concurrent and idempotent.
     inline void uninitialize_ts_range(gaia_txn_id_t start_ts, gaia_txn_id_t end_ts);
 
+    // For debugging use only.
     inline void dump_txn_metadata_at_ts(gaia_txn_id_t ts);
+
+    // This returns the oldest allocated timestamp that can be safely accessed.
+    inline gaia_txn_id_t get_first_safe_allocated_ts();
+
+    // This returns the newest unallocated timestamp that can be allocated
+    // without overwriting entries that are possibly in use.
+    inline gaia_txn_id_t get_last_safe_unallocated_ts();
 
 public:
     // REVIEW: The smallest reasonable size is double the maximum number of logs
@@ -109,14 +173,6 @@ private:
     inline size_t ts_to_buffer_index(gaia_txn_id_t ts);
 
 private:
-    // We need to alias the pre-reclaim watermark for both efficiency and
-    // correctness (a simple duplicate counter that was written after the
-    // watermark was updated could easily run backward under concurrency).
-    //
-    // We cache a pointer to this watermark instead of calling the
-    // get_watermarks() accessor, to avoid taking a dependency on client/server
-    // accessors for the shared-memory structures.
-    //
     // This is an effectively infinite array of timestamp entries, implemented
     // as a finite circular buffer, logically indexed by the txn timestamp
     // counter and containing metadata for every txn that has been submitted to
@@ -152,6 +208,38 @@ private:
     static_assert(
         (c_num_entries & -c_num_entries) == c_num_entries,
         "The txn metadata map buffer size must be a power of 2!");
+
+    // Watermark-related data structures and functions.
+
+private:
+    // An array of monotonically nondecreasing timestamps, or "watermarks", that
+    // represent the progress of system maintenance tasks with respect to txn
+    // history. See `watermark_type_t` for a full explanation.
+    //
+    // We pad each entry to 64 bytes (the width of a cache line) to prevent
+    // memory contention from false sharing.
+    struct
+    {
+        alignas(c_cache_line_size_in_bytes)
+        std::atomic<gaia_txn_id_t::value_type> entry;
+    }
+    m_watermarks[common::get_enum_value(watermark_type_t::count)];
+
+public:
+    // Returns the current value of the given watermark.
+    inline gaia_txn_id_t get_watermark(watermark_type_t watermark_type, bool relaxed_load = false);
+
+    // Atomically advances the given watermark to the given timestamp, if the
+    // given timestamp is larger than the watermark's current value. It thus
+    // guarantees that the watermark is monotonically nondecreasing in time.
+    //
+    // Returns true if the watermark was advanced to the given value, false
+    // otherwise.
+    inline bool advance_watermark(watermark_type_t watermark_type, gaia_txn_id_t ts);
+
+private:
+    // Returns a reference to the array entry of the given watermark.
+    inline std::atomic<gaia_txn_id_t::value_type>& get_watermark_entry(watermark_type_t watermark_type);
 };
 
 #include "txn_metadata.inc"

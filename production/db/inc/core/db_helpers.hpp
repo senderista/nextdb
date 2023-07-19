@@ -52,36 +52,6 @@ inline common::gaia_id_t allocate_id()
     return static_cast<common::gaia_id_t::value_type>(new_id);
 }
 
-// This returns the oldest allocated timestamp that can be safely accessed.
-inline gaia_txn_id_t get_first_safe_allocated_ts()
-{
-    // This needs to be a seq_cst load because we assert on it for all txn
-    // metadata map accesses.
-    // The pre-reclaim watermark is an exclusive upper bound on the timestamp
-    // range that may have been reclaimed, so its value represents the oldest
-    // timestamp entry that is safe to access.
-    return get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
-}
-
-// This returns the newest unallocated timestamp that can be allocated
-// without overwriting entries that are possibly in use.
-inline gaia_txn_id_t get_last_safe_unallocated_ts()
-{
-    // A relaxed load is safe since it will always lag the current value.
-    // REVIEW: False positives could cause unnecessary asserts or unrecoverable
-    // exceptions to be thrown!
-    // bool relaxed_load = true;
-    // gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::post_reclaim, relaxed_load);
-    gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermarks()->get_watermark(watermark_type_t::post_reclaim);
-
-    // Timestamp allocation wraps around the buffer until it reaches the index
-    // corresponding to the post-reclaim watermark, so we just add the buffer
-    // size to the watermark to get the last safe timestamp index.
-    // The post-reclaim watermark is an exclusive upper bound on the timestamp
-    // range that may have been reclaimed, so we need to subtract 1.
-    return post_reclaim_watermark_lower_bound + transactions::txn_metadata_t::c_num_entries - 1;
-}
-
 inline gaia_txn_id_t allocate_txn_id()
 {
     counters_t* counters = gaia::db::get_counters();
@@ -92,7 +62,7 @@ inline gaia_txn_id_t allocate_txn_id()
         "Transaction timestamp exceeds allowed range!");
 
     ASSERT_INVARIANT(
-        new_txn_id <= get_last_safe_unallocated_ts(),
+        new_txn_id <= gaia::db::get_txn_metadata()->get_last_safe_unallocated_ts(),
         "Transaction timestamp entry must be allocated in unused memory!");
 
     // REVIEW: enable these exceptions once we handle them properly?

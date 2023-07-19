@@ -102,7 +102,6 @@ class server_t
     friend gaia::db::id_index_t* gaia::db::get_id_index();
     friend gaia::db::type_index_t* gaia::db::get_type_index();
     friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
-    friend gaia::db::watermarks_t* get_watermarks();
     friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
@@ -123,7 +122,6 @@ private:
     static inline mapped_data_t<id_index_t> s_shared_id_index{};
     static inline mapped_data_t<type_index_t> s_shared_type_index{};
     static inline mapped_data_t<transactions::txn_metadata_t> s_shared_txn_metadata{};
-    static inline mapped_data_t<watermarks_t> s_shared_watermarks{};
     static inline mapped_data_t<safe_ts_entries_t> s_shared_safe_ts_entries{};
 
 private:
@@ -137,7 +135,6 @@ private:
         {data_mapping_t::index_t::id_index, &s_shared_id_index, c_gaia_mem_id_index_prefix},
         {data_mapping_t::index_t::type_index, &s_shared_type_index, c_gaia_mem_type_index_prefix},
         {data_mapping_t::index_t::txn_metadata, &s_shared_txn_metadata, c_gaia_mem_txn_metadata_prefix},
-        {data_mapping_t::index_t::watermarks, &s_shared_watermarks, c_gaia_mem_watermarks_prefix},
         {data_mapping_t::index_t::safe_ts_entries, &s_shared_safe_ts_entries, c_gaia_mem_safe_ts_entries_prefix},
     };
 

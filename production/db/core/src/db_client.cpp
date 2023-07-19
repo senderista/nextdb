@@ -294,7 +294,7 @@ void client_t::begin_transaction()
     // to a valid entry (because the pre-reclaim watermark cannot advance past
     // the post-GC watermark value that we previously reserved, and the post-GC
     // watermark, like all watermarks, is monotonically nondecreasing).
-    if (latest_applied_commit_ts_lower_bound() < get_watermarks()->get_watermark(watermark_type_t::post_gc))
+    if (latest_applied_commit_ts_lower_bound() < get_txn_metadata()->get_watermark(watermark_type_t::post_gc))
     {
         s_session_context->latest_applied_commit_ts_lower_bound = c_invalid_gaia_txn_id;
     }
@@ -346,7 +346,7 @@ void client_t::begin_transaction()
         // A snapshot of the post-apply watermark taken before mapping the
         // global snapshot is a lower bound on the latest commit_ts applied to
         // the global snapshot before it was mapped.
-        auto latest_applied_commit_ts_lower_bound = get_watermarks()->get_watermark(watermark_type_t::post_apply);
+        auto latest_applied_commit_ts_lower_bound = get_txn_metadata()->get_watermark(watermark_type_t::post_apply);
         ASSERT_INVARIANT(txn_id() > latest_applied_commit_ts_lower_bound,
             "The post-apply watermark cannot advance to an active begin_ts!");
         s_session_context->latest_applied_commit_ts_lower_bound = latest_applied_commit_ts_lower_bound;
@@ -637,9 +637,9 @@ void client_t::commit_transaction()
     // Relaxed loads are sufficient, because stale reads will just cause
     // advance_watermark() to later fail.
     bool relaxed_load = true;
-    auto post_gc_watermark = get_watermarks()->get_watermark(
+    auto post_gc_watermark = get_txn_metadata()->get_watermark(
         watermark_type_t::post_gc, relaxed_load);
-    auto post_apply_watermark = get_watermarks()->get_watermark(
+    auto post_apply_watermark = get_txn_metadata()->get_watermark(
         watermark_type_t::post_apply, relaxed_load);
     // REVIEW: Can relaxed loads violate this invariant, making the assert incorrect?
     ASSERT_INVARIANT(
@@ -652,12 +652,12 @@ void client_t::commit_transaction()
     {
         // Apply this committed txn to the global snapshot.
 
-        if (!get_watermarks()->advance_watermark(watermark_type_t::pre_apply, commit_ts))
+        if (!get_txn_metadata()->advance_watermark(watermark_type_t::pre_apply, commit_ts))
         {
             return;
         }
         apply_txn_log_from_ts_and_offset(commit_ts, txn_log_offset());
-        bool has_advanced_watermark = get_watermarks()->advance_watermark(watermark_type_t::post_apply, commit_ts);
+        bool has_advanced_watermark = get_txn_metadata()->advance_watermark(watermark_type_t::post_apply, commit_ts);
         // No other thread should be able to advance the post-apply watermark,
         // because only one thread can advance the pre-apply watermark to this
         // timestamp.
@@ -682,7 +682,7 @@ void client_t::commit_transaction()
         // thread can set TXN_GC_COMPLETE after we invalidate the txn log, so
         // it should not be possible for this CAS to fail.
         ASSERT_INVARIANT(has_set_metadata, "Txn metadata cannot change after we invalidate the txn log!");
-        if (!get_watermarks()->advance_watermark(watermark_type_t::post_gc, commit_ts))
+        if (!get_txn_metadata()->advance_watermark(watermark_type_t::post_gc, commit_ts))
         {
             return;
         }
@@ -693,9 +693,9 @@ void client_t::commit_transaction()
         // Because we already reserved the value of the post-GC watermark, the
         // pre-reclaim watermark cannot advance beyond it.
         ASSERT_INVARIANT(
-            get_watermarks()->get_watermark(watermark_type_t::pre_reclaim) <= commit_ts,
+            get_txn_metadata()->get_watermark(watermark_type_t::pre_reclaim) <= commit_ts,
             "The pre-reclaim watermark cannot advance past this commit_ts!");
-        if (commit_ts - get_watermarks()->get_watermark(watermark_type_t::pre_reclaim) >= c_txn_metadata_reclaim_threshold)
+        if (commit_ts - get_txn_metadata()->get_watermark(watermark_type_t::pre_reclaim) >= c_txn_metadata_reclaim_threshold)
         {
             return;
         }
@@ -1278,7 +1278,7 @@ bool client_t::apply_txn_logs_to_shared_view()
             break;
         }
 
-        if (!get_watermarks()->advance_watermark(watermark_type_t::pre_apply, ts))
+        if (!get_txn_metadata()->advance_watermark(watermark_type_t::pre_apply, ts))
         {
             // If another thread has already advanced the watermark ahead of
             // this ts, we abort advancing it further.
@@ -1311,7 +1311,7 @@ bool client_t::apply_txn_logs_to_shared_view()
         // Now we advance the post-apply watermark to catch up with the pre-apply watermark.
         // REVIEW: Because no other thread can concurrently advance the post-apply watermark,
         // we don't need a full CAS here.
-        bool has_advanced_watermark = get_watermarks()->advance_watermark(watermark_type_t::post_apply, ts);
+        bool has_advanced_watermark = get_txn_metadata()->advance_watermark(watermark_type_t::post_apply, ts);
 
         // No other thread should be able to advance the post-apply watermark,
         // because only one thread can advance the pre-apply watermark to this
@@ -1542,7 +1542,7 @@ bool client_t::update_post_gc_watermark()
             }
         }
 
-        if (!get_watermarks()->advance_watermark(watermark_type_t::post_gc, ts))
+        if (!get_txn_metadata()->advance_watermark(watermark_type_t::post_gc, ts))
         {
             // If another thread has already advanced the post-GC watermark
             // ahead of this ts, we abort advancing it further.
@@ -1564,7 +1564,7 @@ bool client_t::update_pre_reclaim_watermark()
     ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
         "safe_ts entries index should be valid!");
     ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
-    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
+    ASSERT_PRECONDITION(get_txn_metadata(), "Expected watermarks structure to be mapped!");
 
     // The calling thread should have already released its reserved safe_ts, to
     // ensure the pre-reclaim watermark can advance as far as possible.
@@ -1572,10 +1572,10 @@ bool client_t::update_pre_reclaim_watermark()
     ASSERT_PRECONDITION(!reserved_ts.is_valid(), "Expected any reserved safe_ts to be released!");
 
     // Get a snapshot of the post-reclaim watermark to compare to the pre-reclaim watermark.
-    gaia_txn_id_t old_post_reclaim_watermark = get_watermarks()->get_watermark(watermark_type_t::post_reclaim);
+    gaia_txn_id_t old_post_reclaim_watermark = get_txn_metadata()->get_watermark(watermark_type_t::post_reclaim);
 
     // Get a snapshot of the pre-reclaim watermark before advancing it.
-    gaia_txn_id_t old_pre_reclaim_watermark = get_watermarks()->get_watermark(watermark_type_t::pre_reclaim);
+    gaia_txn_id_t old_pre_reclaim_watermark = get_txn_metadata()->get_watermark(watermark_type_t::pre_reclaim);
 
     ASSERT_INVARIANT(
         old_pre_reclaim_watermark >= old_post_reclaim_watermark,
@@ -1599,7 +1599,7 @@ bool client_t::update_pre_reclaim_watermark()
     // The post-GC watermark is an upper bound on the pre-reclaim watermark, so
     // don't bother computing a safe reclamation timestamp if they're within a
     // threshold distance.
-    gaia_txn_id_t post_gc_watermark = get_watermarks()->get_watermark(watermark_type_t::post_gc);
+    gaia_txn_id_t post_gc_watermark = get_txn_metadata()->get_watermark(watermark_type_t::post_gc);
     ASSERT_INVARIANT(
         post_gc_watermark >= old_pre_reclaim_watermark,
         "The post-GC watermark must be at least as recent as the pre-reclaim watermark!");
@@ -1609,7 +1609,7 @@ bool client_t::update_pre_reclaim_watermark()
     }
 
     // Compute a safe reclamation timestamp.
-    gaia_txn_id_t new_pre_reclaim_watermark = get_safe_ts_entries()->get_safe_reclamation_ts(get_watermarks());
+    gaia_txn_id_t new_pre_reclaim_watermark = get_safe_ts_entries()->get_safe_reclamation_ts(get_txn_metadata());
 
     // Abort if the safe reclamation timestamp does not exceed the current
     // pre-reclaim watermark.
@@ -1622,12 +1622,12 @@ bool client_t::update_pre_reclaim_watermark()
         return false;
     }
 
-    if (!get_watermarks()->advance_watermark(watermark_type_t::pre_reclaim, new_pre_reclaim_watermark))
+    if (!get_txn_metadata()->advance_watermark(watermark_type_t::pre_reclaim, new_pre_reclaim_watermark))
     {
         // Abort if another thread has concurrently advanced the
         // pre-reclaim watermark, to avoid contention.
         ASSERT_INVARIANT(
-            get_watermarks()->get_watermark(watermark_type_t::pre_reclaim) > old_pre_reclaim_watermark,
+            get_txn_metadata()->get_watermark(watermark_type_t::pre_reclaim) > old_pre_reclaim_watermark,
             "The watermark must have advanced if advance_watermark() failed!");
 
         // Contention was detected.
@@ -1641,7 +1641,7 @@ bool client_t::update_pre_reclaim_watermark()
 
     // Now advance the post-reclaim watermark, so we know that all timestamps
     // before it correspond to metadata entries that are safe to reuse.
-    if (!get_watermarks()->advance_watermark(
+    if (!get_txn_metadata()->advance_watermark(
         watermark_type_t::post_reclaim, new_pre_reclaim_watermark))
     {
         // If another thread concurrently advanced the post-reclaim watermark,
@@ -1666,8 +1666,8 @@ void client_t::apply_txn_log_from_ts_and_offset(gaia_txn_id_t commit_ts, log_off
     // Because txn logs are only eligible for GC after they fall behind the
     // post-apply watermark, we don't need to protect this txn log from GC.
     ASSERT_INVARIANT(
-        commit_ts <= get_watermarks()->get_watermark(watermark_type_t::pre_apply) &&
-        commit_ts > get_watermarks()->get_watermark(watermark_type_t::post_apply),
+        commit_ts <= get_txn_metadata()->get_watermark(watermark_type_t::pre_apply) &&
+        commit_ts > get_txn_metadata()->get_watermark(watermark_type_t::post_apply),
         "Cannot apply txn log unless it is at or behind the pre-apply watermark and ahead of the post-apply watermark!");
 
     txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
@@ -1838,7 +1838,7 @@ void client_t::protect_txn_metadata()
     ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
         "safe_ts entries index should be valid!");
     ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
-    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
+    ASSERT_PRECONDITION(get_txn_metadata(), "Expected watermarks structure to be mapped!");
 
     // Loop until we successfully reserve the timestamp of the post-GC watermark
     // that we observed. Technically, there is no bound on the number of
@@ -1847,11 +1847,11 @@ void client_t::protect_txn_metadata()
     while (true)
     {
         // Get a snapshot of the post-GC watermark.
-        auto post_gc_watermark = get_watermarks()->get_watermark(watermark_type_t::post_gc);
+        auto post_gc_watermark = get_txn_metadata()->get_watermark(watermark_type_t::post_gc);
 
         // Try to reserve the post-GC watermark's timestamp.
         if (get_safe_ts_entries()->reserve_safe_ts(
-            safe_ts_entries_index(), post_gc_watermark, get_watermarks()))
+            safe_ts_entries_index(), post_gc_watermark, get_txn_metadata()))
         {
             // We successfully reserved the timestamp that we observed.
             break;
@@ -1868,9 +1868,9 @@ void client_t::unprotect_txn_metadata()
     ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
         "safe_ts entries index should be valid!");
     ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
-    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
+    ASSERT_PRECONDITION(get_txn_metadata(), "Expected watermarks structure to be mapped!");
 
-    get_safe_ts_entries()->release_safe_ts(safe_ts_entries_index(), get_watermarks());
+    get_safe_ts_entries()->release_safe_ts(safe_ts_entries_index(), get_txn_metadata());
 }
 
 bool client_t::is_protected_ts(gaia_txn_id_t ts)
@@ -1887,18 +1887,11 @@ gaia_txn_id_t client_t::get_safe_watermark(watermark_type_t watermark_type)
     // which should never require reading the pre-reclaim watermark.
     ASSERT_PRECONDITION(watermark_type != watermark_type_t::pre_reclaim,
         "Cannot use get_safe_watermark() to retrieve pre-reclaim watermark!");
-    ASSERT_PRECONDITION(safe_ts_entries_index() <= safe_ts_entries_t::c_max_safe_ts_index,
-        "safe_ts entries index should be valid!");
-    ASSERT_PRECONDITION(get_safe_ts_entries(), "Expected safe_ts_entries structure to be mapped!");
-    ASSERT_PRECONDITION(get_watermarks(), "Expected watermarks structure to be mapped!");
 
-    auto reserved_ts = get_safe_ts_entries()->get_reserved_ts(safe_ts_entries_index());
-    ASSERT_PRECONDITION(reserved_ts.is_valid(), "Expected valid safe_ts to be reserved!");
-
-    auto watermark_ts = get_watermarks()->get_watermark(watermark_type);
+    auto watermark_ts = get_txn_metadata()->get_watermark(watermark_type);
     if (watermark_ts.is_valid())
     {
-        ASSERT_INVARIANT(reserved_ts <= watermark_ts, "Expected reserved safe_ts to precede watermark!");
+        ASSERT_INVARIANT(is_protected_ts(watermark_ts), "Expected watermark to be protected by reserved safe_ts!");
     }
 
     return watermark_ts;

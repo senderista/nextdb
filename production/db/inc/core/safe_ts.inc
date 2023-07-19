@@ -71,7 +71,7 @@ void safe_ts_entries_t::release_safe_ts_index(size_t& index)
         safe_ts_index, false);
 }
 
-bool safe_ts_entries_t::reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, watermarks_t* watermarks)
+bool safe_ts_entries_t::reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, transactions::txn_metadata_t* txn_metadata)
 {
     ASSERT_PRECONDITION(
         index <= safe_ts_entries_t::c_max_safe_ts_index,
@@ -101,7 +101,7 @@ bool safe_ts_entries_t::reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, wat
     // upper bound on the pre-reclaim watermark, and the pre-reclaim watermark
     // is an exclusive upper bound on the virtual address range eligible for
     // decommit).
-    if (safe_ts < watermarks->get_watermark(watermark_type_t::post_gc))
+    if (safe_ts < txn_metadata->get_watermark(transactions::watermark_type_t::post_gc))
     {
         // If validation fails, retract the published entry.
         entry = c_invalid_gaia_txn_id;
@@ -111,7 +111,7 @@ bool safe_ts_entries_t::reserve_safe_ts(size_t index, gaia_txn_id_t safe_ts, wat
     return true;
 }
 
-void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
+void safe_ts_entries_t::release_safe_ts(size_t index, transactions::txn_metadata_t* txn_metadata)
 {
     ASSERT_PRECONDITION(
         index <= safe_ts_entries_t::c_max_safe_ts_index,
@@ -128,7 +128,7 @@ void safe_ts_entries_t::release_safe_ts(size_t index, watermarks_t* watermarks)
         current_value != c_invalid_gaia_txn_id,
         "Cannot release an invalid safe_ts entry!");
     ASSERT_PRECONDITION(
-        current_value >= watermarks->get_watermark(watermark_type_t::pre_reclaim),
+        current_value >= txn_metadata->get_watermark(transactions::watermark_type_t::pre_reclaim),
         "A reserved safe_ts entry cannot lag the pre-reclaim watermark!");
 
     // Invalidate the previously published entry.
@@ -147,7 +147,7 @@ gaia_txn_id_t safe_ts_entries_t::get_reserved_ts(size_t index)
     return entry_at(index).load(std::memory_order_relaxed);
 }
 
-gaia_txn_id_t safe_ts_entries_t::get_safe_reclamation_ts(watermarks_t* watermarks)
+gaia_txn_id_t safe_ts_entries_t::get_safe_reclamation_ts(transactions::txn_metadata_t* txn_metadata)
 {
     // The algorithm (loosely based on Maged Michael's "Hazard Pointers: Safe
     // Memory Reclamation for Lock-Free Objects"):
@@ -211,7 +211,7 @@ gaia_txn_id_t safe_ts_entries_t::get_safe_reclamation_ts(watermarks_t* watermark
     // scan observed.
 
     // Take a snapshot of the post-GC watermark before the scan.
-    gaia_txn_id_t pre_scan_post_gc_watermark = watermarks->get_watermark(watermark_type_t::post_gc);
+    gaia_txn_id_t pre_scan_post_gc_watermark = txn_metadata->get_watermark(transactions::watermark_type_t::post_gc);
 
     // The post-GC watermark is an upper bound on the safe truncation timestamp.
     gaia_txn_id_t safe_truncation_ts = pre_scan_post_gc_watermark;

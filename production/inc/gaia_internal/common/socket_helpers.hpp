@@ -44,7 +44,7 @@ namespace common
 // unbounded sequence of datagrams, not the cursor API, to avoid creating an
 // ephemeral thread on the server), we should be able to revert to a maximum
 // message size of 4KB (one page).
-constexpr size_t c_max_msg_size_in_bytes{1 << 16};
+constexpr size_t c_max_msg_size_in_bytes{1UL << 16UL};
 
 // This could be up to 253 (the value of SCM_MAX_FD according to the manpage for unix(7)), but we
 // set it to a reasonable value for a stack buffer.

@@ -43,34 +43,29 @@ inline void dump_system_stats()
 inline common::gaia_id_t allocate_id()
 {
     counters_t* counters = gaia::db::get_counters();
-    auto new_id = ++(counters->last_id);
+    auto last_id = (counters->last_id)++;
 
-    DEBUG_ASSERT_INVARIANT(
-        new_id <= std::numeric_limits<common::gaia_id_t::value_type>::max(),
-        "Gaia ID exceeds allowed range!");
+    ASSERT_INVARIANT(
+        last_id < std::numeric_limits<common::gaia_id_t::value_type>::max(),
+        "Gaia ID counter overflowed!");
 
-    return static_cast<common::gaia_id_t::value_type>(new_id);
+    return static_cast<common::gaia_id_t::value_type>(last_id + 1);
 }
 
 inline gaia_txn_id_t allocate_txn_id()
 {
     counters_t* counters = gaia::db::get_counters();
-    auto new_txn_id = ++(counters->last_txn_id);
-
+    auto last_txn_id = (counters->last_txn_id)++;
     ASSERT_INVARIANT(
-        new_txn_id < (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width),
-        "Transaction timestamp exceeds allowed range!");
+        last_txn_id < std::numeric_limits<gaia_txn_id_t::value_type>::max(),
+        "txn ID counter overflowed!");
 
+    auto new_txn_id = last_txn_id + 1;
     ASSERT_INVARIANT(
         new_txn_id <= gaia::db::get_txn_metadata()->get_last_safe_unallocated_ts(),
         "Transaction timestamp entry must be allocated in unused memory!");
 
     // REVIEW: enable these exceptions once we handle them properly?
-
-    // if (new_txn_id >= (1UL << transactions::txn_metadata_entry_t::c_txn_ts_bit_width))
-    // {
-    //     throw transaction_timestamp_allocation_failure_internal();
-    // }
 
     // if (new_txn_id > get_last_safe_unallocated_ts())
     // {
@@ -97,14 +92,13 @@ inline gaia_txn_id_t allocate_txn_id()
 inline gaia_locator_t allocate_locator(common::gaia_type_t type)
 {
     counters_t* counters = gaia::db::get_counters();
-
-    if (counters->last_locator >= c_max_locators)
+    auto last_locator = (counters->last_locator)++;
+    if (last_locator >= c_max_locators)
     {
         throw system_object_limit_exceeded_internal();
     }
 
-    auto new_locator_value = ++(counters->last_locator);
-    auto new_locator = static_cast<gaia_locator_t::value_type>(new_locator_value);
+    auto new_locator = static_cast<gaia_locator_t::value_type>(last_locator + 1);
 
     type_index_t* type_index = get_type_index();
     type_index->add_locator(type, new_locator);
@@ -349,7 +343,7 @@ inline gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t
         transactions::txn_metadata_entry_t expected_value{
             transactions::txn_metadata_entry_t::uninitialized_value()};
         transactions::txn_metadata_entry_t desired_value{
-            transactions::txn_metadata_entry_t::new_commit_ts_entry(begin_ts, log_offset)};
+            transactions::txn_metadata_entry_t::new_commit_ts_entry(commit_ts, begin_ts, log_offset)};
         transactions::txn_metadata_entry_t actual_value{
             get_txn_metadata()->compare_exchange(commit_ts, expected_value, desired_value)};
 

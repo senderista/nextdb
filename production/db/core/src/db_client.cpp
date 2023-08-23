@@ -783,7 +783,7 @@ bool client_t::get_txn_log_offsets_in_range(gaia_txn_id_t start_ts, gaia_txn_id_
 
             if (ts_entry.is_committed())
             {
-                gaia_txn_id_t txn_id = ts_entry.get_timestamp();
+                gaia_txn_id_t txn_id = ts_entry.get_timestamp(ts);
 
                 // Because the watermark could advance past its saved value, we
                 // need to be sure that we don't send a commit_ts with a
@@ -847,7 +847,7 @@ void client_t::get_txn_log_offsets_for_snapshot(gaia_txn_id_t begin_ts,
 
             if (ts_entry.is_committed())
             {
-                gaia_txn_id_t txn_id = ts_entry.get_timestamp();
+                gaia_txn_id_t txn_id = ts_entry.get_timestamp(ts);
 
                 // Because the watermark could advance past its saved value, we
                 // need to be sure that we don't send a commit_ts with a
@@ -931,7 +931,7 @@ gaia_txn_id_t client_t::submit_txn(gaia_txn_id_t begin_ts, log_offset_t log_offs
 bool client_t::validate_txn(gaia_txn_id_t commit_ts)
 {
     txn_metadata_entry_t commit_ts_entry = get_txn_metadata()->get_entry(commit_ts);
-    gaia_txn_id_t begin_ts = commit_ts_entry.get_timestamp();
+    gaia_txn_id_t begin_ts = commit_ts_entry.get_timestamp(commit_ts);
 
     // Ensure that begin_ts is protected from reclamation.
     ASSERT_PRECONDITION(is_protected_ts(begin_ts), "begin_ts is unprotected from reclamation!");
@@ -1034,7 +1034,7 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                 // thread concurrently advancing the watermark. If either log is
                 // invalidated, it must be that another thread has validated our
                 // txn, so we can exit early.
-                if (!acquire_txn_log_reference(ts_entry.get_log_offset(), ts_entry.get_timestamp()))
+                if (!acquire_txn_log_reference(ts_entry.get_log_offset(), ts_entry.get_timestamp(ts)))
                 {
                     // If this submitted txn already had its log invalidated, then
                     // it must be eligible for GC. But any commit_ts within the
@@ -1046,8 +1046,8 @@ bool client_t::validate_txn(gaia_txn_id_t commit_ts)
                         c_message_validating_txn_should_have_been_validated_before_conflicting_log_invalidation);
                     return get_txn_metadata()->is_txn_committed(commit_ts);
                 }
-                auto release_submitted_log_ref = make_scope_guard([ts_entry] {
-                    release_txn_log_reference(ts_entry.get_log_offset(), ts_entry.get_timestamp());
+                auto release_submitted_log_ref = make_scope_guard([ts, ts_entry] {
+                    release_txn_log_reference(ts_entry.get_log_offset(), ts_entry.get_timestamp(ts));
                 });
 
                 if (txn_logs_conflict(
@@ -1220,7 +1220,7 @@ bool client_t::apply_txn_logs_to_shared_view()
 
             if (ts_entry.is_submitted())
             {
-                auto commit_ts = ts_entry.get_timestamp();
+                auto commit_ts = ts_entry.get_timestamp(ts);
                 // NB: Because transitioning a begin_ts entry from ACTIVE to
                 // SUBMITTED and setting its linked commit_ts are not a single
                 // atomic operation, it is possible for a begin_ts entry in
@@ -1371,7 +1371,7 @@ bool client_t::gc_applied_txn_logs()
             log_offset_t log_offset = ts_entry.get_log_offset();
             ASSERT_INVARIANT(log_offset.is_valid(), "A commit_ts txn metadata entry must have a valid log offset!");
             txn_log_t* txn_log = get_logs()->get_log_from_offset(log_offset);
-            gaia_txn_id_t begin_ts = ts_entry.get_timestamp();
+            gaia_txn_id_t begin_ts = ts_entry.get_timestamp(ts);
 
             // If our begin_ts doesn't match the current begin_ts, the txn log
             // has already been invalidated (and possibly reused), so some other
@@ -1513,7 +1513,7 @@ bool client_t::update_post_gc_watermark()
             // entry protects the entire conflict window of the commit_ts.
             if (ts_entry.is_submitted())
             {
-                auto commit_ts = ts_entry.get_timestamp();
+                auto commit_ts = ts_entry.get_timestamp(ts);
                 // The pre-apply watermark can only advance to a submitted
                 // begin_ts if its commit_ts is validated, and the commit_ts
                 // cannot be validated without setting the begin_ts entry's

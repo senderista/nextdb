@@ -180,7 +180,7 @@ constexpr size_t c_chunk_version_bit_width{
 constexpr size_t c_chunk_version_shift{c_chunk_state_bit_width};
 
 static_assert(
-    common::get_enum_value(chunk_state_t::last_value) < (1 << c_chunk_state_bit_width));
+    common::get_enum_value(chunk_state_t::last_value) < (1UL << c_chunk_state_bit_width));
 
 } // namespace db
 } // namespace gaia

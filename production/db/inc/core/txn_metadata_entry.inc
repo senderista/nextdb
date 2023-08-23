@@ -38,15 +38,19 @@ txn_metadata_entry_t txn_metadata_entry_t::new_begin_ts_entry()
     return txn_metadata_entry_t{c_txn_status_active << c_txn_status_flags_shift};
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::new_commit_ts_entry(gaia_txn_id_t begin_ts, db::log_offset_t log_offset)
+txn_metadata_entry_t txn_metadata_entry_t::new_commit_ts_entry(
+    gaia_txn_id_t commit_ts, gaia_txn_id_t begin_ts, db::log_offset_t log_offset)
 {
+    ASSERT_PRECONDITION(
+        begin_ts < commit_ts && commit_ts - begin_ts < (1UL << c_txn_ts_delta_bit_width),
+        "commit_ts cannot exceed begin_ts by more than 2^16!");
+
     // We construct the commit_ts metadata by concatenating required bits.
     uint64_t shifted_log_offset = static_cast<uint64_t>(log_offset) << c_txn_log_offset_shift;
     constexpr uint64_t c_shifted_status_flags{
         c_txn_status_validating << c_txn_status_flags_shift};
-    // The timestamp must fit into the low 42 bits of the metadata word.
-    ASSERT_INVARIANT((begin_ts & c_txn_ts_mask) == begin_ts, "Timestamp must fit into 42 bits!");
-    return txn_metadata_entry_t{c_shifted_status_flags | shifted_log_offset | begin_ts};
+    return txn_metadata_entry_t{c_shifted_status_flags | shifted_log_offset}
+        .set_timestamp(commit_ts, begin_ts);
 }
 
 bool txn_metadata_entry_t::is_uninitialized() const
@@ -133,10 +137,31 @@ uint64_t txn_metadata_entry_t::get_status() const
     return ((m_word & c_txn_status_flags_mask) >> c_txn_status_flags_shift);
 }
 
-gaia_txn_id_t txn_metadata_entry_t::get_timestamp() const
+gaia_txn_id_t txn_metadata_entry_t::get_timestamp(gaia_txn_id_t my_ts) const
 {
-    // The timestamp is in the low 42 bits of the metadata word.
-    return (m_word & c_txn_ts_mask);
+    ASSERT_PRECONDITION(is_begin_ts_entry() || is_commit_ts_entry(),
+        "Can only get linked timestamp from a begin_ts or commit_ts entry!");
+
+    size_t ts_delta = (m_word & c_txn_ts_delta_mask) >> c_txn_ts_delta_shift;
+
+    // If the delta is 0, it means there is no linked timestamp present.
+    if (ts_delta == 0)
+    {
+        return c_invalid_gaia_txn_id;
+    }
+
+    if (is_begin_ts_entry())
+    {
+        ASSERT_INVARIANT(std::numeric_limits<uint64_t>::max() - my_ts.value() >= ts_delta,
+            "commit_ts value calculated from offset to begin_ts value would overflow!");
+    }
+    else
+    {
+        ASSERT_INVARIANT(my_ts.value() >= ts_delta,
+            "begin_ts value calculated from offset to commit_ts value would underflow!");
+    }
+
+    return is_begin_ts_entry() ? (my_ts + ts_delta) : (my_ts - ts_delta);
 }
 
 db::log_offset_t txn_metadata_entry_t::get_log_offset() const
@@ -203,11 +228,21 @@ txn_metadata_entry_t txn_metadata_entry_t::set_gc_complete() const
         m_word | (c_txn_gc_complete << c_txn_gc_flags_shift)};
 }
 
-txn_metadata_entry_t txn_metadata_entry_t::set_timestamp(gaia_txn_id_t ts) const
+txn_metadata_entry_t txn_metadata_entry_t::set_timestamp(gaia_txn_id_t my_ts, gaia_txn_id_t linked_ts) const
 {
-    // The timestamp must fit into the low 42 bits of the metadata word.
-    ASSERT_INVARIANT((ts & c_txn_ts_mask) == ts, "Timestamp must fit into 42 bits!");
-    return txn_metadata_entry_t{m_word | ts};
+    ASSERT_PRECONDITION(is_begin_ts_entry() || is_commit_ts_entry(),
+        "Can only set linked timestamp on a begin_ts or commit_ts entry!");
+    ASSERT_PRECONDITION(is_begin_ts_entry() ? (my_ts < linked_ts) : (linked_ts < my_ts),
+        "A begin_ts must always precede its matching commit_ts!");
+
+    // A begin_ts always precedes the matching commit_ts, so we ensure the sign
+    // of the difference is always positive.
+    uint64_t ts_delta = is_begin_ts_entry() ? (linked_ts - my_ts) : (my_ts - linked_ts);
+    ASSERT_PRECONDITION(ts_delta < (1UL << c_txn_ts_delta_bit_width),
+        "commit_ts cannot exceed begin_ts by more than 2^16!");
+
+    return txn_metadata_entry_t{
+        m_word | (ts_delta << c_txn_ts_delta_shift)};
 }
 
 const char* txn_metadata_entry_t::status_to_str() const

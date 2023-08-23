@@ -80,13 +80,13 @@ bool txn_metadata_t::is_txn_terminated(gaia_txn_id_t begin_ts)
 gaia_txn_id_t txn_metadata_t::get_begin_ts_from_commit_ts(gaia_txn_id_t commit_ts)
 {
     ASSERT_PRECONDITION(is_commit_ts(commit_ts), c_message_not_a_commit_timestamp);
-    return get_entry(commit_ts).get_timestamp();
+    return get_entry(commit_ts).get_timestamp(commit_ts);
 }
 
 gaia_txn_id_t txn_metadata_t::get_commit_ts_from_begin_ts(gaia_txn_id_t begin_ts)
 {
     ASSERT_PRECONDITION(is_begin_ts(begin_ts), c_message_not_a_begin_timestamp);
-    return get_entry(begin_ts).get_timestamp();
+    return get_entry(begin_ts).get_timestamp(begin_ts);
 }
 
 db::log_offset_t txn_metadata_t::get_txn_log_offset_from_ts(gaia_txn_id_t commit_ts)
@@ -157,13 +157,13 @@ void txn_metadata_t::set_submitted_txn_commit_ts(gaia_txn_id_t begin_ts, gaia_tx
     // redundantly set the same commit_ts.
     bool relaxed_load = true;
     auto old_entry = get_entry(begin_ts, relaxed_load);
-    auto old_commit_ts = old_entry.get_timestamp();
+    auto old_commit_ts = old_entry.get_timestamp(begin_ts);
     ASSERT_INVARIANT(!old_commit_ts.is_valid() || old_commit_ts == commit_ts,
         "A begin_ts entry can only contain one commit_ts value!");
     if (!old_commit_ts.is_valid())
     {
         // We don't need a CAS here because setting the commit_ts is idempotent.
-        auto new_entry = old_entry.set_timestamp(commit_ts);
+        auto new_entry = old_entry.set_timestamp(begin_ts, commit_ts);
         // A relaxed store is safe because all current callers handle the case
         // of reading an invalid commit_ts from a submitted begin_ts entry.
         bool relaxed_store = true;

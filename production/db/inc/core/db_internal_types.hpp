@@ -285,13 +285,16 @@ struct txn_log_t
         return os;
     }
 
+    static constexpr size_t c_txn_log_begin_ts_bit_width{48UL};
+    static constexpr size_t c_txn_log_begin_ts_shift{common::c_uint64_bit_count - c_txn_log_begin_ts_bit_width};
+    static constexpr size_t c_txn_log_begin_ts_mask{((1UL << c_txn_log_begin_ts_bit_width) - 1) << c_txn_log_begin_ts_shift};
     static constexpr size_t c_txn_log_refcount_bit_width{16UL};
     static constexpr uint64_t c_txn_log_refcount_shift{common::c_uint64_bit_count - c_txn_log_refcount_bit_width};
     static constexpr uint64_t c_txn_log_refcount_mask{((1UL << c_txn_log_refcount_bit_width) - 1) << c_txn_log_refcount_shift};
 
     inline static gaia_txn_id_t begin_ts_from_word(uint64_t word)
     {
-        return gaia_txn_id_t{(word & transactions::txn_metadata_entry_t::c_txn_ts_mask) >> transactions::txn_metadata_entry_t::c_txn_ts_shift};
+        return gaia_txn_id_t{(word & c_txn_log_begin_ts_mask) >> c_txn_log_begin_ts_shift};
     }
 
     inline static size_t refcount_from_word(uint64_t word)
@@ -302,8 +305,9 @@ struct txn_log_t
     inline static uint64_t word_from_begin_ts_and_refcount(gaia_txn_id_t begin_ts, size_t refcount)
     {
         ASSERT_PRECONDITION(begin_ts.is_valid(), "Begin timestamp must be valid!");
-        ASSERT_PRECONDITION(refcount < (1 << c_txn_log_refcount_bit_width), "Reference count must fit in 16 bits!");
-        return (begin_ts << transactions::txn_metadata_entry_t::c_txn_ts_shift) | (refcount << c_txn_log_refcount_shift);
+        ASSERT_PRECONDITION(begin_ts.value() < (1UL << c_txn_log_begin_ts_bit_width), "Begin timestamp must fit in 48 bits!");
+        ASSERT_PRECONDITION(refcount < (1UL << c_txn_log_refcount_bit_width), "Reference count must fit in 16 bits!");
+        return (begin_ts << c_txn_log_begin_ts_shift) | (refcount << c_txn_log_refcount_shift);
     }
 
     inline gaia_txn_id_t begin_ts() const

@@ -54,7 +54,8 @@ public:
     static inline txn_metadata_entry_t uninitialized_value();
     static inline txn_metadata_entry_t sealed_value();
     static inline txn_metadata_entry_t new_begin_ts_entry();
-    static inline txn_metadata_entry_t new_commit_ts_entry(gaia_txn_id_t begin_ts, db::log_offset_t log_offset);
+    static inline txn_metadata_entry_t new_commit_ts_entry(
+        gaia_txn_id_t commit_ts, gaia_txn_id_t begin_ts, db::log_offset_t log_offset);
 
     inline bool is_uninitialized() const;
     inline bool is_sealed() const;
@@ -71,7 +72,7 @@ public:
     inline bool is_terminated() const;
 
     inline uint64_t get_status() const;
-    inline gaia_txn_id_t get_timestamp() const;
+    inline gaia_txn_id_t get_timestamp(gaia_txn_id_t my_ts) const;
     inline db::log_offset_t get_log_offset() const;
 
     inline txn_metadata_entry_t set_submitted() const;
@@ -79,7 +80,7 @@ public:
     inline txn_metadata_entry_t set_decision(bool is_committed) const;
     inline txn_metadata_entry_t set_durable() const;
     inline txn_metadata_entry_t set_gc_complete() const;
-    inline txn_metadata_entry_t set_timestamp(gaia_txn_id_t ts) const;
+    inline txn_metadata_entry_t set_timestamp(gaia_txn_id_t my_ts, gaia_txn_id_t linked_ts) const;
 
     inline const char* status_to_str() const;
     inline std::string dump_metadata() const;
@@ -89,7 +90,7 @@ private:
     //
     // Transaction metadata format:
     // 64 bits:
-    //   0-41 = linked timestamp
+    //   0-15 = linked timestamp offset
     //   42-57 = log offset
     //   58 = reserved
     //   59 = persistence status
@@ -186,26 +187,24 @@ private:
     // We need the timestamp size constants to be public for now, because
     // they're used by the txn log metadata.
 public:
-    // Linked txn timestamp embedded in a txn metadata entry. For a commit_ts
-    // entry, this is its associated begin_ts, and for a begin_ts entry, this is
-    // its associated commit_ts. A commit_ts entry always contains its linked
-    // begin_ts, but a begin_ts entry may not be updated with its linked
-    // commit_ts until after the associated commit_ts entry has been created.
+    // 16-bit delta (from the current timestamp) of a linked txn timestamp.
     //
-    // REVIEW: We could save at least 10 bits (conservatively) if we replaced
-    // the linked timestamp with its delta from the metadata entry's timestamp (the
-    // delta for a linked begin_ts would be implicitly negative). 32 bits should
-    // be more than we would ever need, and 16 bits could suffice if we enforced
-    // limits on the "age" of an active txn (e.g., if we aborted txns whose
-    // begin_ts was > 2^16 older than the last allocated timestamp). We might
-    // want to enforce an age limit anyway, of course, to avoid unbounded
-    // garbage accumulation (which consumes memory, open fds, and other
-    // resources, and also increases txn begin latency, although it doesn't
-    // affect read/write latency, because we don't use version chains).
+    // For a commit_ts entry, this is its associated begin_ts, and for a
+    // begin_ts entry, this is its associated commit_ts. A commit_ts entry
+    // always contains its linked begin_ts, but a begin_ts entry may not be
+    // updated with its linked commit_ts until after the associated commit_ts
+    // entry has been created.
+    //
+    // For a linked begin_ts, the delta is implicitly negative (since the
+    // current timestamp is its corresponding commit_ts, so must have a larger
+    // timestamp).
+    //
+    // NB: We must strictly enforce limits on the current range of txn
+    // timestamps to prevent this delta from overflowing!
 
-    static constexpr size_t c_txn_ts_bit_width{42};
-    static constexpr size_t c_txn_ts_shift{0};
-    static constexpr uint64_t c_txn_ts_mask{((1UL << c_txn_ts_bit_width) - 1) << c_txn_ts_shift};
+    static constexpr size_t c_txn_ts_delta_bit_width{16};
+    static constexpr size_t c_txn_ts_delta_shift{0};
+    static constexpr uint64_t c_txn_ts_delta_mask{((1UL << c_txn_ts_delta_bit_width) - 1) << c_txn_ts_delta_shift};
 
 private:
     // Transaction metadata special values.

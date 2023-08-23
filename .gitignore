@@ -1,6 +1,7 @@
 # Editor files.
 .vscode/
 .idea/
+.VSCodeCounter/
 
 # Build files.
 build/

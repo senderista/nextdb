@@ -48,9 +48,11 @@ namespace transactions
 // API to prevent the pre-reclaim watermark from advancing past it and allowing
 // its metadata entry to be reclaimed. Finally, the "post-reclaim" watermark
 // represents an (exclusive) upper bound on the timestamps whose metadata
-// entries have had their memory fully reclaimed, so it is eligible for reuse.
+// entries have had their memory fully reclaimed, so they are eligible for
+// reuse.
 //
-// The pre-apply watermark must either be equal to the post-apply watermark or greater by 1.
+// The pre-apply watermark must either be equal to the post-apply watermark or
+// greater by 1.
 //
 // Schematically:
 // post-reclaim watermark
@@ -173,33 +175,29 @@ private:
     inline size_t ts_to_buffer_index(gaia_txn_id_t ts);
 
 private:
-    // This is an effectively infinite array of timestamp entries, implemented
-    // as a finite circular buffer, logically indexed by the txn timestamp
-    // counter and containing metadata for every txn that has been submitted to
-    // the system. When a prefix of timestamp entries falls behind the
-    // pre-reclaim watermark, it can be overwritten with new entries.
+    // This is an effectively infinite (up to 2^64) array of timestamp entries,
+    // implemented as a finite circular buffer, logically indexed by the txn
+    // timestamp counter and containing metadata for every txn that has been
+    // submitted to the system. When a prefix of timestamp entries falls behind
+    // the post-reclaim watermark, its underlying memory can be reused for new
+    // entries.
     //
     // Entries may be "uninitialized", "sealed" (i.e., initialized with a
     // special "junk" value and forbidden to be used afterward), or initialized
     // with txn metadata, consisting of 3 status bits, 1 bit for GC status
     // (unknown or complete), 1 bit for persistence status (unknown or
     // complete), 1 bit reserved for future use, 16 bits for a txn log offset,
-    // and 42 bits for a linked timestamp (i.e., the commit timestamp of a
-    // submitted txn embedded in its begin timestamp metadata, or the begin
-    // timestamp of a submitted txn embedded in its commit timestamp metadata).
-    // The 3 status bits use the high bit to distinguish begin timestamps from
-    // commit timestamps, and 2 bits to store the state of an active,
-    // terminated, or submitted txn.
+    // and 16 bits for the offset from this timestamp to a linked timestamp
+    // (i.e., the commit timestamp of a submitted txn embedded in its begin
+    // timestamp metadata, or the begin timestamp of a submitted txn embedded in
+    // its commit timestamp metadata). The 3 status bits use the high bit to
+    // distinguish begin timestamps from commit timestamps, and 2 bits to store
+    // the state of an active, terminated, or submitted txn.
     //
     // The array is always accessed without any locking, but its entries have
     // read and write barriers (via std::atomic) that ensure causal consistency
     // between any threads that read or write the same txn metadata. Any writes
     // to entries that may be written by multiple threads use CAS operations.
-    //
-    // REVIEW: We currently limit timestamps to 42 bits, but could extend them
-    // if necessary up to 64 bits, if we replace linked timestamps in the
-    // metadata word with relative offsets. If the circular buffer cannot exceed
-    // 2^16 entries, the offsets could be restricted to 16 bits.
 
     std::atomic<uint64_t> m_txn_metadata_map[c_num_entries];
 

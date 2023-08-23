@@ -91,13 +91,13 @@ private:
     // Transaction metadata format:
     // 64 bits:
     //   0-15 = linked timestamp offset
-    //   42-57 = log offset
-    //   58 = reserved
+    //   16-31 = log offset
+    //   32-58 = reserved
     //   59 = persistence status
     //   60 = gc status
     //   61-63 = txn status
     //
-    // txn_status (3) | gc_status (1) | persistence_status (1) | reserved (1) | log_offset (16) | linked_timestamp (42)
+    // txn_status (3) | gc_status (1) | persistence_status (1) | reserved (27) | log_offset (16) | linked_timestamp_offset (16)
 
     static constexpr size_t c_txn_metadata_bit_width{common::c_uint64_bit_count};
 
@@ -167,9 +167,9 @@ private:
     static constexpr uint64_t c_txn_persistence_unknown{0b0UL};
     static constexpr uint64_t c_txn_persistence_complete{0b1UL};
 
-    // This is a placeholder for the single (currently) reserved bit in the txn
+    // This is a placeholder for the 27 (currently) reserved bits in the txn
     // metadata format.
-    static constexpr size_t c_txn_reserved_flags_bit_width{1};
+    static constexpr size_t c_txn_reserved_flags_bit_width{27};
 
     // Txn log offset embedded in the txn metadata.
     // This is only present in a commit_ts metadata entry.

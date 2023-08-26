@@ -170,6 +170,46 @@ static_assert(
     c_invalid_log_offset.value() == log_offset_t::c_default_invalid_value,
     "Invalid c_invalid_log_offset initialization!");
 
+/**
+ * The type of a session id.
+ *
+ * This type is used to identify active sessions and to index into arrays
+ * containing public session metadata.
+ *
+ * Since the existing session limit is 2^7, and we may want to embed values of
+ * this type into bitfields, the underlying type is an unsigned byte.
+ */
+class session_id_t : public common::int_type_t<uint8_t, std::numeric_limits<uint8_t>::max()>
+{
+public:
+    // By default, we should initialize to an invalid value.
+    constexpr session_id_t()
+        : common::int_type_t<uint8_t, std::numeric_limits<uint8_t>::max()>()
+    {
+    }
+
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    constexpr session_id_t(uint8_t value)
+        : common::int_type_t<uint8_t, std::numeric_limits<uint8_t>::max()>(value)
+    {
+    }
+};
+
+static_assert(
+    sizeof(session_id_t) == sizeof(session_id_t::value_type),
+    "session_id_t has a different size than its underlying integer type!");
+
+/**
+ * The value of an invalid gaia_txn_id.
+ */
+constexpr session_id_t c_invalid_session_id;
+
+// This assertion ensures that the default type initialization
+// matches the value of the invalid constant.
+static_assert(
+    c_invalid_session_id.value() == session_id_t::c_default_invalid_value,
+    "Invalid c_invalid_session_id initialization!");
+
 } // namespace db
 } // namespace gaia
 
@@ -203,6 +243,16 @@ struct hash<gaia::db::gaia_offset_t>
     size_t operator()(const gaia::db::gaia_offset_t& offset) const noexcept
     {
         return std::hash<gaia::db::gaia_offset_t::value_type>()(offset.value());
+    }
+};
+
+// This enables session_id_t to be hashed and used as a key in maps.
+template <>
+struct hash<gaia::db::session_id_t>
+{
+    size_t operator()(const gaia::db::session_id_t& offset) const noexcept
+    {
+        return std::hash<gaia::db::session_id_t::value_type>()(offset.value());
     }
 };
 

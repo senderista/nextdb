@@ -21,7 +21,7 @@
 #include "chunk_manager.hpp"
 #include "mapped_data.hpp"
 #include "memory_manager.hpp"
-#include "safe_ts.hpp"
+#include "session_metadata.hpp"
 #include "txn_metadata.hpp"
 #include "type_index.hpp"
 
@@ -101,8 +101,8 @@ class server_t
     friend gaia::db::logs_t* gaia::db::get_logs();
     friend gaia::db::id_index_t* gaia::db::get_id_index();
     friend gaia::db::type_index_t* gaia::db::get_type_index();
-    friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
-    friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
+    friend gaia::db::txn_metadata_t* gaia::db::get_txn_metadata();
+    friend gaia::db::session_metadata_t* gaia::db::get_session_metadata();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
 
@@ -121,8 +121,8 @@ private:
     static inline mapped_data_t<logs_t> s_shared_logs{};
     static inline mapped_data_t<id_index_t> s_shared_id_index{};
     static inline mapped_data_t<type_index_t> s_shared_type_index{};
-    static inline mapped_data_t<transactions::txn_metadata_t> s_shared_txn_metadata{};
-    static inline mapped_data_t<safe_ts_entries_t> s_shared_safe_ts_entries{};
+    static inline mapped_data_t<txn_metadata_t> s_shared_txn_metadata{};
+    static inline mapped_data_t<session_metadata_t> s_shared_session_metadata{};
 
 private:
     // A list of data mappings that we manage together.
@@ -135,7 +135,7 @@ private:
         {data_mapping_t::index_t::id_index, &s_shared_id_index, c_gaia_mem_id_index_prefix},
         {data_mapping_t::index_t::type_index, &s_shared_type_index, c_gaia_mem_type_index_prefix},
         {data_mapping_t::index_t::txn_metadata, &s_shared_txn_metadata, c_gaia_mem_txn_metadata_prefix},
-        {data_mapping_t::index_t::safe_ts_entries, &s_shared_safe_ts_entries, c_gaia_mem_safe_ts_entries_prefix},
+        {data_mapping_t::index_t::session_metadata, &s_shared_session_metadata, c_gaia_mem_session_metadata_prefix},
     };
 
     static void clear_server_state();

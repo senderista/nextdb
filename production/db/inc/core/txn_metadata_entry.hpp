@@ -25,8 +25,6 @@ namespace gaia
 {
 namespace db
 {
-namespace transactions
-{
 
 // This value class represents an immutable snapshot of txn metadata for a
 // single timestamp, but with no association to a particular timestamp. (The
@@ -224,6 +222,5 @@ private:
 
 #include "txn_metadata_entry.inc"
 
-} // namespace transactions
 } // namespace db
 } // namespace gaia

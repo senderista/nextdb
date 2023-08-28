@@ -72,7 +72,7 @@ constexpr char c_gaia_mem_id_index_prefix[] = "gaia_mem_id_index_";
 constexpr char c_gaia_mem_type_index_prefix[] = "gaia_mem_type_index_";
 constexpr char c_gaia_mem_txn_metadata_prefix[] = "gaia_mem_txn_metadata_";
 constexpr char c_gaia_mem_watermarks_prefix[] = "gaia_mem_watermarks_";
-constexpr char c_gaia_mem_safe_ts_entries_prefix[] = "gaia_mem_safe_ts_entries_";
+constexpr char c_gaia_mem_session_metadata_prefix[] = "c_gaia_mem_session_metadata_";
 
 #if __has_feature(thread_sanitizer)
 // We set the maximum number of locators (including the reserved "invalid"

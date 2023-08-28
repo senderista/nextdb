@@ -297,11 +297,11 @@ inline gaia_txn_id_t register_begin_ts()
         begin_ts = allocate_txn_id();
 
         // The txn metadata must be uninitialized (not sealed).
-        transactions::txn_metadata_entry_t expected_value{
-            transactions::txn_metadata_entry_t::uninitialized_value()};
-        transactions::txn_metadata_entry_t desired_value{
-            transactions::txn_metadata_entry_t::new_begin_ts_entry()};
-        transactions::txn_metadata_entry_t actual_value{
+        txn_metadata_entry_t expected_value{
+            txn_metadata_entry_t::uninitialized_value()};
+        txn_metadata_entry_t desired_value{
+            txn_metadata_entry_t::new_begin_ts_entry()};
+        txn_metadata_entry_t actual_value{
             get_txn_metadata()->compare_exchange(begin_ts, expected_value, desired_value)};
 
         if (actual_value == expected_value)
@@ -311,7 +311,7 @@ inline gaia_txn_id_t register_begin_ts()
 
         // The CAS can only fail if it returns the "sealed" value.
         ASSERT_INVARIANT(
-            actual_value == transactions::txn_metadata_entry_t::sealed_value(),
+            actual_value == txn_metadata_entry_t::sealed_value(),
             "A newly allocated timestamp cannot be concurrently initialized to any value except the sealed value!");
     }
 
@@ -324,7 +324,7 @@ inline gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t
 {
     ASSERT_PRECONDITION(
         !get_txn_metadata()->is_uninitialized_ts(begin_ts),
-        transactions::c_message_uninitialized_timestamp);
+        c_message_uninitialized_timestamp);
 
     // The newly allocated commit timestamp for the submitted txn.
     gaia_txn_id_t commit_ts;
@@ -340,11 +340,11 @@ inline gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t
         commit_ts = allocate_txn_id();
 
         // The txn metadata must be uninitialized (not sealed).
-        transactions::txn_metadata_entry_t expected_value{
-            transactions::txn_metadata_entry_t::uninitialized_value()};
-        transactions::txn_metadata_entry_t desired_value{
-            transactions::txn_metadata_entry_t::new_commit_ts_entry(commit_ts, begin_ts, log_offset)};
-        transactions::txn_metadata_entry_t actual_value{
+        txn_metadata_entry_t expected_value{
+            txn_metadata_entry_t::uninitialized_value()};
+        txn_metadata_entry_t desired_value{
+            txn_metadata_entry_t::new_commit_ts_entry(commit_ts, begin_ts, log_offset)};
+        txn_metadata_entry_t actual_value{
             get_txn_metadata()->compare_exchange(commit_ts, expected_value, desired_value)};
 
         if (actual_value == expected_value)
@@ -354,7 +354,7 @@ inline gaia_txn_id_t register_commit_ts(gaia_txn_id_t begin_ts, db::log_offset_t
 
         // The CAS can only fail if it returns the "sealed" value.
         ASSERT_INVARIANT(
-            actual_value == transactions::txn_metadata_entry_t::sealed_value(),
+            actual_value == txn_metadata_entry_t::sealed_value(),
             "A newly allocated timestamp cannot be concurrently initialized to any value except the sealed value!");
     }
 

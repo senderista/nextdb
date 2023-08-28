@@ -117,7 +117,7 @@ gaia_txn_id_t client_t::latest_applied_commit_ts_lower_bound()
     return s_session_context->latest_applied_commit_ts_lower_bound;
 }
 
-size_t client_t::safe_ts_entries_index()
+session_id_t client_t::session_id()
 {
-    return s_session_context->safe_ts_entries_index;
+    return s_session_context->session_id;
 }

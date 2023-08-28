@@ -81,7 +81,7 @@ static gaia::db::type_index_t* get_type_index()
     return gaia::db::client_t::s_session_context->shared_type_index.data();
 }
 
-static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
+static gaia::db::txn_metadata_t* get_txn_metadata()
 {
     // Since we don't use this accessor in the client itself, we can assert that
     // it is always non-null (since callers should never be able to observe it
@@ -93,16 +93,16 @@ static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
     return gaia::db::client_t::s_session_context->shared_txn_metadata.data();
 }
 
-static gaia::db::safe_ts_entries_t* get_safe_ts_entries()
+static gaia::db::session_metadata_t* get_session_metadata()
 {
     // Since we don't use this accessor in the client itself, we can assert that
     // it is always non-null (since callers should never be able to observe it
-    // in its null state, i.e., with the safe_ts_entries segment unmapped).
+    // in its null state, i.e., with the session_metadata segment unmapped).
     DEBUG_ASSERT_PRECONDITION(
-        gaia::db::client_t::s_session_context && gaia::db::client_t::s_session_context->shared_safe_ts_entries.is_set(),
-        "safe_ts entries not mapped!");
+        gaia::db::client_t::s_session_context && gaia::db::client_t::s_session_context->shared_session_metadata.is_set(),
+        "Session metadata not mapped!");
 
-    return gaia::db::client_t::s_session_context->shared_safe_ts_entries.data();
+    return gaia::db::client_t::s_session_context->shared_session_metadata.data();
 }
 
 static gaia::db::memory_manager::memory_manager_t* get_memory_manager()

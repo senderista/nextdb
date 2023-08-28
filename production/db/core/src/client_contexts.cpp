@@ -22,7 +22,7 @@ client_session_context_t::client_session_context_t()
     data_mappings.push_back({data_mapping_t::index_t::id_index, &shared_id_index, c_gaia_mem_id_index_prefix});
     data_mappings.push_back({data_mapping_t::index_t::type_index, &shared_type_index, c_gaia_mem_type_index_prefix});
     data_mappings.push_back({data_mapping_t::index_t::txn_metadata, &shared_txn_metadata, c_gaia_mem_txn_metadata_prefix});
-    data_mappings.push_back({data_mapping_t::index_t::safe_ts_entries, &shared_safe_ts_entries, c_gaia_mem_safe_ts_entries_prefix});
+    data_mappings.push_back({data_mapping_t::index_t::session_metadata, &shared_session_metadata, c_gaia_mem_session_metadata_prefix});
 }
 
 void client_session_context_t::clear()

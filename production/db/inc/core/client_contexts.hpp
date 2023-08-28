@@ -17,7 +17,7 @@
 #include "db_internal_types.hpp"
 #include "mapped_data.hpp"
 #include "memory_manager.hpp"
-#include "safe_ts.hpp"
+#include "session_metadata.hpp"
 #include "txn_metadata.hpp"
 #include "type_index.hpp"
 
@@ -70,8 +70,8 @@ struct client_session_context_t
     mapped_data_t<logs_t> shared_logs{};
     mapped_data_t<id_index_t> shared_id_index{};
     mapped_data_t<type_index_t> shared_type_index{};
-    mapped_data_t<transactions::txn_metadata_t> shared_txn_metadata{};
-    mapped_data_t<safe_ts_entries_t> shared_safe_ts_entries{};
+    mapped_data_t<txn_metadata_t> shared_txn_metadata{};
+    mapped_data_t<session_metadata_t> shared_session_metadata{};
 
     // The list of data mappings that we manage together.
     // The order of declarations must be the order of data_mapping_t::index_t values!
@@ -88,8 +88,8 @@ struct client_session_context_t
     // or before that commit_ts.
     gaia_txn_id_t latest_applied_commit_ts_lower_bound{c_invalid_gaia_txn_id};
 
-    // This thread's reserved index into the shared_safe_ts_entries publication array.
-    size_t safe_ts_entries_index{safe_ts_entries_t::c_invalid_safe_ts_index};
+    // This thread's session ID.
+    session_id_t session_id{c_invalid_session_id};
 
     void clear();
 

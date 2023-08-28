@@ -27,10 +27,10 @@ static inline gaia::db::id_index_t* get_id_index();
 static inline gaia::db::type_index_t* get_type_index();
 
 // Returns a pointer to a mapping of the "txn_metadata" shared memory segment.
-static inline gaia::db::transactions::txn_metadata_t* get_txn_metadata();
+static inline gaia::db::txn_metadata_t* get_txn_metadata();
 
-// Returns a pointer to a mapping of the "safe_ts_entries" shared memory segment.
-static inline gaia::db::safe_ts_entries_t* get_safe_ts_entries();
+// Returns a pointer to a mapping of the "session_metadata" shared memory segment.
+static inline gaia::db::session_metadata_t* get_session_metadata();
 
 // Gets the memory manager instance for the current thread or process.
 static inline gaia::db::memory_manager::memory_manager_t* get_memory_manager();

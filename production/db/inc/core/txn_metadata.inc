@@ -399,7 +399,7 @@ gaia_txn_id_t txn_metadata_t::get_first_safe_allocated_ts()
     // The pre-reclaim watermark is an exclusive upper bound on the timestamp
     // range that may have been reclaimed, so its value represents the oldest
     // timestamp entry that is safe to access.
-    return get_watermark(watermark_type_t::pre_reclaim);
+    return get_watermark(watermark_type_t::pre_md_reclaim);
 }
 
 gaia_txn_id_t txn_metadata_t::get_last_safe_unallocated_ts()
@@ -408,8 +408,8 @@ gaia_txn_id_t txn_metadata_t::get_last_safe_unallocated_ts()
     // REVIEW: False positives could cause unnecessary asserts or unrecoverable
     // exceptions to be thrown!
     // bool relaxed_load = true;
-    // gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermark(watermark_type_t::post_reclaim, relaxed_load);
-    gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermark(watermark_type_t::post_reclaim);
+    // gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermark(watermark_type_t::post_md_reclaim, relaxed_load);
+    gaia_txn_id_t post_reclaim_watermark_lower_bound = get_watermark(watermark_type_t::post_md_reclaim);
 
     // Timestamp allocation wraps around the buffer until it reaches the index
     // corresponding to the post-reclaim watermark, so we just add the buffer

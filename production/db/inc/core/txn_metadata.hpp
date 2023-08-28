@@ -27,8 +27,6 @@ namespace gaia
 {
 namespace db
 {
-namespace transactions
-{
 
 // These global timestamp variables are "watermarks" that represent the progress
 // of various system functions with respect to transaction history. The
@@ -71,11 +69,12 @@ namespace transactions
 
 enum class watermark_type_t
 {
-    pre_apply,
-    post_apply,
-    post_gc,
-    pre_reclaim,
-    post_reclaim,
+    unknown,
+    pre_log_apply,
+    post_log_apply,
+    post_log_gc,
+    pre_md_reclaim,
+    post_md_reclaim,
     // This should always be last.
     count
 };
@@ -227,6 +226,9 @@ public:
     // Returns the current value of the given watermark.
     inline gaia_txn_id_t get_watermark(watermark_type_t watermark_type, bool relaxed_load = false);
 
+    // Returns a reference to the array entry of the given watermark.
+    inline std::atomic<gaia_txn_id_t::value_type>& get_watermark_entry(watermark_type_t watermark_type);
+
     // Atomically advances the given watermark to the given timestamp, if the
     // given timestamp is larger than the watermark's current value. It thus
     // guarantees that the watermark is monotonically nondecreasing in time.
@@ -234,14 +236,9 @@ public:
     // Returns true if the watermark was advanced to the given value, false
     // otherwise.
     inline bool advance_watermark(watermark_type_t watermark_type, gaia_txn_id_t ts);
-
-private:
-    // Returns a reference to the array entry of the given watermark.
-    inline std::atomic<gaia_txn_id_t::value_type>& get_watermark_entry(watermark_type_t watermark_type);
 };
 
 #include "txn_metadata.inc"
 
-} // namespace transactions
 } // namespace db
 } // namespace gaia

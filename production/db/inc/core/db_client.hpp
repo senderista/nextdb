@@ -25,7 +25,7 @@
 #include "gaia_internal/exceptions.hpp"
 
 #include "client_contexts.hpp"
-#include "safe_ts.hpp"
+#include "session_metadata.hpp"
 
 namespace gaia
 {
@@ -50,8 +50,8 @@ class client_t
     friend gaia::db::logs_t* gaia::db::get_logs();
     friend gaia::db::id_index_t* gaia::db::get_id_index();
     friend gaia::db::type_index_t* gaia::db::get_type_index();
-    friend gaia::db::transactions::txn_metadata_t* get_txn_metadata();
-    friend gaia::db::safe_ts_entries_t* get_safe_ts_entries();
+    friend gaia::db::txn_metadata_t* gaia::db::get_txn_metadata();
+    friend gaia::db::session_metadata_t* gaia::db::get_session_metadata();
     friend gaia::db::memory_manager::memory_manager_t* gaia::db::get_memory_manager();
     friend gaia::db::memory_manager::chunk_manager_t* gaia::db::get_chunk_manager();
 
@@ -96,7 +96,7 @@ private:
     static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();
     static inline std::vector<std::pair<chunk_offset_t, chunk_version_t>>& map_gc_chunks_to_versions();
     static inline gaia_txn_id_t latest_applied_commit_ts_lower_bound();
-    static inline size_t safe_ts_entries_index();
+    static inline session_id_t session_id();
 
 private:
     // We don't use unique_ptr because its destructor is "non-trivial"
@@ -156,7 +156,7 @@ private:
     static bool is_protected_ts(gaia_txn_id_t ts);
 
     // Asserts that the watermark is protected by a reserved safe_ts.
-    static gaia_txn_id_t get_safe_watermark(transactions::watermark_type_t watermark_type);
+    static gaia_txn_id_t get_safe_watermark(watermark_type_t watermark_type);
 };
 
 #include "db_client.inc"

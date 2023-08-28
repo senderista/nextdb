@@ -62,7 +62,7 @@ static gaia::db::type_index_t* get_type_index()
     return gaia::db::server_t::s_shared_type_index.data();
 }
 
-static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
+static gaia::db::txn_metadata_t* get_txn_metadata()
 {
     // The txn_metadata segment should always be mapped whenever any callers
     // of this method are able to observe it.
@@ -70,12 +70,12 @@ static gaia::db::transactions::txn_metadata_t* get_txn_metadata()
     return gaia::db::server_t::s_shared_txn_metadata.data();
 }
 
-static gaia::db::safe_ts_entries_t* get_safe_ts_entries()
+static gaia::db::session_metadata_t* get_session_metadata()
 {
-    // The safe_ts_entries segment should always be mapped whenever any callers
+    // The session_metadata segment should always be mapped whenever any callers
     // of this method are able to observe it.
-    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_safe_ts_entries.is_set(), "Server safe_ts_entries segment is unmapped!");
-    return gaia::db::server_t::s_shared_safe_ts_entries.data();
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_session_metadata.is_set(), "Server session_metadata segment is unmapped!");
+    return gaia::db::server_t::s_shared_session_metadata.data();
 }
 
 // This is currently never used, so we just return nullptr to avoid changing the interface.

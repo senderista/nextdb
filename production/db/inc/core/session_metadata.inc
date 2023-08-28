@@ -129,10 +129,10 @@ bool safe_ts_entries_t::reserve_safe_ts(session_id_t session_id, gaia_txn_id_t s
     // other threads (which must perform a seq_cst load to observe it).
     entry = safe_ts;
 
-    // Validate that the new safe_ts does not lag the "upper bound" watermark
-    // (equality is acceptable because the "upper bound" watermark is an
-    // inclusive upper bound on the "advancing" watermark, and the "advancing"
-    // watermark is an exclusive upper bound on the timestamp range eligible for
+    // Validate that the new safe_ts does not lag the post-retire watermark
+    // (equality is acceptable because the post-retire watermark is an inclusive
+    // upper bound on the pre-reclaim watermark, and the pre-reclaim watermark
+    // is an exclusive upper bound on the timestamp range eligible for
     // reclamation).
     if (safe_ts < txn_metadata->get_watermark(m_post_retire_watermark_type))
     {

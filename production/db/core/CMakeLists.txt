@@ -32,7 +32,6 @@ add_library(gaia_db_client STATIC
   src/db_client_api.cpp
   src/db_client.cpp
   src/exceptions.cpp
-  src/gaia_ptr_api.cpp
   src/gaia_ptr.cpp
   src/memory_manager.cpp
 )

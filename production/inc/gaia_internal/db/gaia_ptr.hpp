@@ -16,7 +16,6 @@
 #include "gaia_internal/common/generator_iterator.hpp"
 #include "gaia_internal/db/db_object.hpp"
 #include "gaia_internal/db/db_types.hpp"
-#include "gaia_internal/db/gaia_ptr_api.hpp"
 
 #include "memory_types.hpp"
 
@@ -34,9 +33,6 @@ namespace db
  */
 class gaia_ptr_t
 {
-    friend void gaia_ptr::update_payload(gaia_ptr_t& obj, size_t data_size, const void* data);
-    friend gaia_ptr_t gaia_ptr::create(common::gaia_id_t id, common::gaia_type_t type, size_t data_size, const void* data);
-
 public:
     gaia_ptr_t() = default;
 
@@ -54,16 +50,12 @@ public:
 
     static common::gaia_id_t generate_id();
 
-    // NOTE: This method is only used for testing. Please use
-    // 'gaia_ptr::create(...)' in user facing code path.
     static gaia_ptr_t create(
         common::gaia_id_t id,
         common::gaia_type_t type,
         size_t data_size,
         const void* data);
 
-    // NOTE: This method is only used for testing. Please use
-    // 'gaia_ptr::update_payload(...)' in user facing code path.
     void update_payload(size_t data_size, const void* data);
 
     inline bool is_null() const;

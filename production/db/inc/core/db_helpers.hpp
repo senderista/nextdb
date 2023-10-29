@@ -100,6 +100,9 @@ inline gaia_locator_t allocate_locator(common::gaia_type_t type)
 
     auto new_locator = static_cast<gaia_locator_t::value_type>(last_locator + 1);
 
+    locator_types_t* locator_types = gaia::db::get_locator_types();
+    (*locator_types)[new_locator].store(type);
+
     type_index_t* type_index = get_type_index();
     type_index->add_locator(type, new_locator);
 

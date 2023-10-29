@@ -92,6 +92,11 @@ mapped_data_t<locators_t>& client_t::shared_locators()
     return s_session_context->shared_locators;
 }
 
+mapped_data_t<locator_types_t>& client_t::shared_locator_types()
+{
+    return s_session_context->shared_locator_types;
+}
+
 mapped_data_t<data_t>& client_t::shared_data()
 {
     return s_session_context->shared_data;

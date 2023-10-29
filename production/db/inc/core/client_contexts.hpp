@@ -65,6 +65,7 @@ struct client_session_context_t
     // Unlike the other mappings, the locators segment is re-mapped for each transaction.
     mapped_data_t<locators_t> private_locators{};
     mapped_data_t<locators_t> shared_locators{};
+    mapped_data_t<locator_types_t> shared_locator_types{};
     mapped_data_t<counters_t> shared_counters{};
     mapped_data_t<data_t> shared_data{};
     mapped_data_t<logs_t> shared_logs{};

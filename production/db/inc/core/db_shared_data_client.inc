@@ -21,6 +21,18 @@ static gaia::db::locators_t* get_locators()
     return gaia::db::client_t::s_session_context->private_locators.data();
 }
 
+static gaia::db::locators_t* get_locator_types()
+{
+    // Since we don't use this accessor in the client itself, we can assert that
+    // it is always non-null (since callers should never be able to observe it
+    // in its null state, i.e., with the locator_types segment unmapped).
+    DEBUG_ASSERT_PRECONDITION(
+        gaia::db::client_t::s_session_context && gaia::db::client_t::s_session_context->shared_locator_types.is_set(),
+        "Locator types segment not mapped!");
+
+    return gaia::db::client_t::s_session_context->shared_locator_types.data();
+}
+
 static gaia::db::counters_t* get_counters()
 {
     // Since we don't use this accessor in the client itself, we can assert that

@@ -1732,12 +1732,16 @@ void client_t::deallocate_txn_log(txn_log_t* txn_log, bool is_committed)
         }
 
         // For committed txns, we need to remove any deleted locators from the
-        // type index. For aborted or rolled-back txns, we need to remove any
-        // allocated locators from the type index.
+        // type index and remove their type entries.
+        // For aborted or rolled-back txns, we need to remove any allocated
+        // locators from the type index and remove their type entries.
         bool is_locator_removal_committed = is_committed && log_record->operation() == gaia_operation_t::remove;
         bool is_locator_creation_aborted = !is_committed && log_record->operation() == gaia_operation_t::create;
         if (is_locator_removal_committed || is_locator_creation_aborted)
         {
+            locator_types_t* locator_types = get_locator_types();
+            (*locator_types)[log_record->locator].store(c_invalid_gaia_type);
+
             type_index_t* type_index = get_type_index();
             bool has_succeeded = type_index->delete_locator(log_record->locator);
             ASSERT_INVARIANT(has_succeeded, "A locator cannot be deleted twice!");

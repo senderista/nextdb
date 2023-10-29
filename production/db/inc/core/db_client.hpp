@@ -45,6 +45,7 @@ class client_t
     /**
      * @throws no_open_session_internal if there is no open session.
      */
+    friend gaia::db::locator_types_t* gaia::db::get_locator_types();
     friend gaia::db::counters_t* gaia::db::get_counters();
     friend gaia::db::data_t* gaia::db::get_data();
     friend gaia::db::logs_t* gaia::db::get_logs();
@@ -91,6 +92,7 @@ private:
     static inline int session_socket();
     static inline mapped_data_t<locators_t>& private_locators();
     static inline mapped_data_t<locators_t>& shared_locators();
+    static inline mapped_data_t<locator_types_t>& shared_locator_types();
     static inline mapped_data_t<data_t>& shared_data();
     static inline std::vector<data_mapping_t>& data_mappings();
     static inline std::vector<std::pair<gaia_txn_id_t, log_offset_t>>& txn_logs_for_snapshot();

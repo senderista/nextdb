@@ -96,6 +96,7 @@ class server_t
     friend class gaia_ptr_t;
 
     friend gaia::db::locators_t* gaia::db::get_locators();
+    friend gaia::db::locator_types_t* gaia::db::get_locator_types();
     friend gaia::db::counters_t* gaia::db::get_counters();
     friend gaia::db::data_t* gaia::db::get_data();
     friend gaia::db::logs_t* gaia::db::get_logs();
@@ -116,6 +117,7 @@ private:
     static inline std::atomic<size_t> s_session_count{0};
 
     static inline mapped_data_t<locators_t> s_shared_locators{};
+    static inline mapped_data_t<locator_types_t> s_shared_locator_types{};
     static inline mapped_data_t<counters_t> s_shared_counters{};
     static inline mapped_data_t<data_t> s_shared_data{};
     static inline mapped_data_t<logs_t> s_shared_logs{};
@@ -129,6 +131,7 @@ private:
     // The order of declarations must be the order of data_mapping_t::index_t values!
     static inline constexpr data_mapping_t c_data_mappings[] = {
         {data_mapping_t::index_t::locators, &s_shared_locators, c_gaia_mem_locators_prefix},
+        {data_mapping_t::index_t::locator_types, &s_shared_locator_types, c_gaia_mem_locator_types_prefix},
         {data_mapping_t::index_t::counters, &s_shared_counters, c_gaia_mem_counters_prefix},
         {data_mapping_t::index_t::data, &s_shared_data, c_gaia_mem_data_prefix},
         {data_mapping_t::index_t::logs, &s_shared_logs, c_gaia_mem_logs_prefix},

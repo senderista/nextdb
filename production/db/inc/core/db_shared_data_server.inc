@@ -17,6 +17,14 @@ static gaia::db::locators_t* get_locators()
     return gaia::db::server_t::s_shared_locators.data();
 }
 
+static gaia::db::locator_types_t* get_locator_types()
+{
+    // The shared locator_types segment should always be mapped whenever any callers
+    // of this method are able to observe it.
+    DEBUG_ASSERT_PRECONDITION(gaia::db::server_t::s_shared_locator_types.is_set(), "Server locator_types segment is unmapped!");
+    return gaia::db::server_t::s_shared_locator_types.data();
+}
+
 static gaia::db::counters_t* get_counters()
 {
     // Since we don't use this accessor in the server itself, we can assert that

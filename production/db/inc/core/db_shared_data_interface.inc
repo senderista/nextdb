@@ -11,6 +11,9 @@
 // Returns a pointer to a mapping of the "locators" shared memory segment.
 static inline gaia::db::locators_t* get_locators();
 
+// Returns a pointer to a mapping of the "locator_types" shared memory segment.
+static inline gaia::db::locator_types_t* get_locator_types();
+
 // Returns a pointer to a mapping of the "counters" shared memory segment.
 static inline gaia::db::counters_t* get_counters();
 

@@ -65,6 +65,7 @@ inline std::ostream& operator<<(std::ostream& os, const gaia_operation_t& o)
 }
 
 constexpr char c_gaia_mem_locators_prefix[] = "gaia_mem_locators_";
+constexpr char c_gaia_mem_locator_types_prefix[] = "gaia_mem_locator_types_";
 constexpr char c_gaia_mem_counters_prefix[] = "gaia_mem_counters_";
 constexpr char c_gaia_mem_data_prefix[] = "gaia_mem_data_";
 constexpr char c_gaia_mem_logs_prefix[] = "gaia_mem_logs_";
@@ -126,6 +127,10 @@ static_assert(
 // The elements are atomic because reads and writes to shared memory need to be
 // synchronized across threads/processes.
 typedef std::atomic<gaia_offset_t::value_type> locators_t[c_max_locators + 1];
+
+// This is an array of type IDs in the data segment corresponding to locator
+// types. An untyped or empty locator is mapped to c_invalid_gaia_type.
+typedef std::atomic<common::gaia_type_t::value_type> locator_types_t[c_max_locators + 1];
 
 struct hash_node_t
 {

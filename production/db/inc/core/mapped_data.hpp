@@ -126,6 +126,7 @@ struct data_mapping_t
     enum class index_t
     {
         locators,
+        locator_types,
         counters,
         data,
         logs,

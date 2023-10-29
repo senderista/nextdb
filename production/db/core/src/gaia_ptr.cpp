@@ -21,7 +21,9 @@
 
 #ifdef DEBUG
 #include "memory_helpers.hpp"
+// NOLINTBEGIN(cppcoreguidelines-macro-usage)
 #define WRITE_PROTECT(o) write_protect_allocation_page_for_offset((o))
+// NOLINTEND(cppcoreguidelines-macro-usage)
 #else
 #define WRITE_PROTECT(o) ((void)0)
 #endif

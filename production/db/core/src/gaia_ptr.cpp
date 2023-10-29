@@ -72,6 +72,11 @@ gaia_offset_t gaia_ptr_t::to_offset() const
     return locator_to_offset(m_locator);
 }
 
+gaia_type_t gaia_ptr_t::type() const
+{
+    return locator_to_type(m_locator);
+}
+
 void gaia_ptr_t::finalize_create()
 {
     WRITE_PROTECT(to_offset());
@@ -122,7 +127,6 @@ gaia_ptr_t gaia_ptr_t::create_no_txn(gaia_id_t id, gaia_type_t type, size_t data
     gaia_ptr_t obj(locator);
     db_object_t* obj_ptr = obj.to_ptr();
     obj_ptr->id = id;
-    obj_ptr->type = type;
     obj_ptr->payload_size = static_cast<uint16_t>(data_size);
     if (data)
     {

@@ -168,6 +168,18 @@ inline db_object_t* locator_to_ptr(gaia_locator_t locator)
     return offset_to_ptr(locator_to_offset(locator));
 }
 
+// REVIEW: Would a relaxed load option be useful for optimizations?
+inline common::gaia_type_t locator_to_type(gaia_locator_t locator)
+{
+    if (!locator.is_valid())
+    {
+        return common::c_invalid_gaia_type;
+    }
+
+    locator_types_t* locator_types = gaia::db::get_locator_types();
+    return (*locator_types)[locator].load();
+}
+
 inline bool locator_exists(gaia_locator_t locator)
 {
     return (locator.is_valid())

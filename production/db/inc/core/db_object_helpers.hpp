@@ -39,7 +39,6 @@ inline db_object_t* create_object(
     gaia::db::allocate_object(locator, obj_data_size);
     db_object_t* obj_ptr = locator_to_ptr(locator);
     obj_ptr->id = id;
-    obj_ptr->type = type;
     obj_ptr->payload_size = obj_data_size;
     if (obj_data_size > 0)
     {

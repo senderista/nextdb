@@ -24,20 +24,19 @@ namespace db
 {
 
 /**
- * The type of a Gaia object, containing both object metadata (gaia_id,
- * gaia_type) and user-defined data (e.g., flatbuffer payload).
+ * The type of a Gaia object, containing both object metadata (gaia_id) and
+ * user-defined data (e.g., flatbuffer payload).
  *
- * For convenience in memory management, objects are always aligned to 64B.
- * The entire object (including both object metadata and user-defined data)
- * may have minimum size 16B and maximum size 64KB.
+ * For convenience in memory management, objects are always aligned to 64B. The
+ * entire object (including both object metadata and user-defined data) may have
+ * minimum size 16B and maximum size 64KB.
  *
- * The object metadata occupies 16 bytes:
- * 8 (id) + 4 (type) + 2 (payload_size) + 2 (padding) = 16.
+ * The object metadata occupies 16 bytes: 8 (id) + 2 (payload_size) +
+ * 2 (padding) + 4 (padding) = 16.
  */
 struct alignas(gaia::db::c_allocation_alignment) db_object_t
 {
     gaia::common::gaia_id_t id;
-    gaia::common::gaia_type_t type;
 
     // The flatbuffer size limit is 2GB (the maximum value of a signed 32-bit
     // word). With a 16-bit payload size, the limit is 64KB. The total size of
@@ -47,7 +46,8 @@ struct alignas(gaia::db::c_allocation_alignment) db_object_t
     // We want to ensure that the payload is at least 8-byte-aligned (required
     // for flatbuffers). 16-byte alignment is even better in case flatbuffers
     // ever supports 16-byte scalars.
-    uint16_t padding;
+    uint16_t padding1;
+    uint32_t padding2;
 
     // This contains a serialized flatbuffer object.
     // Flexible array members are not standardized, but are supported by both gcc and clang.
@@ -85,8 +85,6 @@ struct alignas(gaia::db::c_allocation_alignment) db_object_t
     {
         os << "id: "
            << o.id
-           << "\ttype: "
-           << o.type
            << "\tpayload_size: "
            << o.payload_size
            << std::endl;

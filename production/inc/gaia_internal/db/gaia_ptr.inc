@@ -41,11 +41,6 @@ common::gaia_id_t gaia_ptr_t::id() const
     return to_ptr() ? to_ptr()->id : common::c_invalid_gaia_id;
 }
 
-common::gaia_type_t gaia_ptr_t::type() const
-{
-    return to_ptr() ? to_ptr()->type : common::c_invalid_gaia_type;
-}
-
 char* gaia_ptr_t::data() const
 {
     return data_size() ? const_cast<char*>(to_ptr()->data()) : nullptr;
@@ -58,5 +53,5 @@ size_t gaia_ptr_t::data_size() const
 
 bool gaia_ptr_t::is(common::gaia_type_t type) const
 {
-    return to_ptr() && to_ptr()->type == type;
+    return to_ptr() && (this->type() == type);
 }

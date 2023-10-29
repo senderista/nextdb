@@ -61,12 +61,12 @@ public:
     inline bool is_null() const;
 
     inline common::gaia_id_t id() const;
-    inline common::gaia_type_t type() const;
     inline char* data() const;
     inline size_t data_size() const;
 
     db_object_t* to_ptr() const;
     gaia_offset_t to_offset() const;
+    common::gaia_type_t type() const;
 
     /**
      * Returns an iterator representing a server-side cursor over all objects of the given type.

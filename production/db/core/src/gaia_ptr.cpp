@@ -77,13 +77,13 @@ gaia_type_t gaia_ptr_t::type() const
     return locator_to_type(m_locator);
 }
 
-void gaia_ptr_t::finalize_create()
+void gaia_ptr_t::finalize_create() const
 {
     WRITE_PROTECT(to_offset());
     client_t::log_txn_operation(m_locator, c_invalid_gaia_offset, to_offset());
 }
 
-void gaia_ptr_t::finalize_update(gaia_offset_t old_offset)
+void gaia_ptr_t::finalize_update(gaia_offset_t old_offset) const
 {
     WRITE_PROTECT(to_offset());
     client_t::log_txn_operation(m_locator, old_offset, to_offset());
@@ -96,7 +96,7 @@ gaia_ptr_t gaia_ptr_t::create(gaia_id_t id, gaia_type_t type, size_t data_size, 
     return obj;
 }
 
-void gaia_ptr_t::update_payload(size_t data_size, const void* data)
+void gaia_ptr_t::update_payload(size_t data_size, const void* data) const
 {
     gaia_offset_t old_offset = to_offset();
     update_payload_no_txn(data_size, data);
@@ -140,7 +140,7 @@ gaia_ptr_t gaia_ptr_t::create_no_txn(gaia_id_t id, gaia_type_t type, size_t data
     return obj;
 }
 
-void gaia_ptr_t::clone_no_txn()
+void gaia_ptr_t::clone_no_txn() const
 {
     db_object_t* old_this = to_ptr();
     size_t data_size = old_this->payload_size;
@@ -150,7 +150,7 @@ void gaia_ptr_t::clone_no_txn()
     memcpy(new_this, old_this, total_object_size);
 }
 
-void gaia_ptr_t::update_payload_no_txn(size_t data_size, const void* data)
+void gaia_ptr_t::update_payload_no_txn(size_t data_size, const void* data) const
 {
     db_object_t* old_this = to_ptr();
 

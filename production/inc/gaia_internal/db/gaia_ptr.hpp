@@ -33,6 +33,8 @@ namespace db
  */
 class gaia_ptr_t
 {
+    template<typename> friend class gaia_var_t;
+
 public:
     gaia_ptr_t() = default;
 
@@ -56,12 +58,12 @@ public:
         size_t data_size,
         const void* data);
 
-    void update_payload(size_t data_size, const void* data);
+    void update_payload(size_t data_size, const void* data) const;
 
     inline bool is_null() const;
 
     inline common::gaia_id_t id() const;
-    inline char* data() const;
+    inline const char* data() const;
     inline size_t data_size() const;
 
     db_object_t* to_ptr() const;
@@ -85,8 +87,8 @@ public:
 protected:
     void allocate(size_t size);
 
-    void finalize_create();
-    void finalize_update(gaia_offset_t old_offset);
+    void finalize_create() const;
+    void finalize_update(gaia_offset_t old_offset) const;
 
     inline bool is(common::gaia_type_t type) const;
 
@@ -97,9 +99,9 @@ private:
         size_t data_size,
         const void* data);
 
-    void update_payload_no_txn(size_t data_size, const void* data);
+    void update_payload_no_txn(size_t data_size, const void* data) const;
 
-    void clone_no_txn();
+    void clone_no_txn() const;
 
     static std::shared_ptr<common::iterators::generator_t<gaia_locator_t>> get_locator_generator_for_type(common::gaia_type_t type);
 

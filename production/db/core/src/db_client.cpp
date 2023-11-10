@@ -70,7 +70,7 @@ int client_t::get_session_socket(const std::string& socket_name)
 
     // The socket name is not null-terminated in the address structure, but
     // we need to add an extra byte for the null byte prefix.
-    auto server_addr_size = static_cast<socklen_t>(sizeof(server_addr.sun_family) + 1 + strlen(&server_addr.sun_path[1]));
+    auto server_addr_size = static_cast<socklen_t>(sizeof(server_addr.sun_family) + 1 + ::strlen(&server_addr.sun_path[1]));
     if (-1 == ::connect(session_socket, reinterpret_cast<sockaddr*>(&server_addr), server_addr_size))
     {
         throw_system_error("Connect failed!");

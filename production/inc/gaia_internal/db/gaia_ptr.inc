@@ -41,7 +41,7 @@ common::gaia_id_t gaia_ptr_t::id() const
     return to_ptr() ? to_ptr()->id : common::c_invalid_gaia_id;
 }
 
-char* gaia_ptr_t::data() const
+const char* gaia_ptr_t::data() const
 {
     return data_size() ? const_cast<char*>(to_ptr()->data()) : nullptr;
 }

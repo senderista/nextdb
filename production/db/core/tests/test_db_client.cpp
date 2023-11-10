@@ -45,9 +45,9 @@ void print_payload(std::ostream& o, size_t size, const char* payload)
     }
 }
 
-void print_node(const gaia_ptr_t& node, bool indent = false)
+void print_item(const gaia_ptr_t& item, bool indent = false)
 {
-    if (!node)
+    if (!item)
     {
         return;
     }
@@ -60,11 +60,11 @@ void print_node(const gaia_ptr_t& node, bool indent = false)
     }
 
     std::cerr
-        << "Node id:"
-        << node.id() << ", type:"
-        << node.type();
+        << "item id:"
+        << item.id() << ", type:"
+        << item.type();
 
-    print_payload(std::cerr, node.data_size(), node.data());
+    print_payload(std::cerr, item.data_size(), item.data());
 
     if (indent)
     {
@@ -84,10 +84,10 @@ class db__core__db_client__test : public db_test_base_t
 private:
     void init_data()
     {
-        node1_id = gaia_ptr_t::generate_id();
-        node2_id = gaia_ptr_t::generate_id();
-        node3_id = gaia_ptr_t::generate_id();
-        node4_id = gaia_ptr_t::generate_id();
+        item1_id = gaia_ptr_t::generate_id();
+        item2_id = gaia_ptr_t::generate_id();
+        item3_id = gaia_ptr_t::generate_id();
+        item4_id = gaia_ptr_t::generate_id();
 
         begin_transaction();
         {
@@ -95,24 +95,24 @@ private:
             type2 = 2;
 
             std::cerr << std::endl;
-            std::cerr << "*** create test nodes" << std::endl;
-            gaia_ptr_t node1 = gaia_ptr_t::create(node1_id, type1, 0, nullptr);
-            print_node(node1);
-            gaia_ptr_t node2 = gaia_ptr_t::create(node2_id, type1, 0, nullptr);
-            print_node(node2);
-            gaia_ptr_t node3 = gaia_ptr_t::create(node3_id, type2, 0, nullptr);
-            print_node(node3);
-            gaia_ptr_t node4 = gaia_ptr_t::create(node4_id, type2, 0, nullptr);
-            print_node(node4);
+            std::cerr << "*** create test items" << std::endl;
+            gaia_ptr_t item1 = gaia_ptr_t::create(item1_id, type1, 0, nullptr);
+            print_item(item1);
+            gaia_ptr_t item2 = gaia_ptr_t::create(item2_id, type1, 0, nullptr);
+            print_item(item2);
+            gaia_ptr_t item3 = gaia_ptr_t::create(item3_id, type2, 0, nullptr);
+            print_item(item3);
+            gaia_ptr_t item4 = gaia_ptr_t::create(item4_id, type2, 0, nullptr);
+            print_item(item4);
         }
         commit_transaction();
     }
 
 protected:
-    gaia_id_t node1_id;
-    gaia_id_t node2_id;
-    gaia_id_t node3_id;
-    gaia_id_t node4_id;
+    gaia_id_t item1_id;
+    gaia_id_t item2_id;
+    gaia_id_t item3_id;
+    gaia_id_t item4_id;
     gaia_type_t type1;
     gaia_type_t type2;
 
@@ -149,18 +149,18 @@ TEST_F(db__core__db_client__test, read_data)
     {
         std::cerr << std::endl;
         std::cerr << "*** Update payload and verify" << std::endl;
-        gaia_ptr_t node1 = gaia_ptr_t::from_gaia_id(node1_id);
-        gaia_ptr_t node2 = gaia_ptr_t::from_gaia_id(node2_id);
-        gaia_ptr_t node3 = gaia_ptr_t::from_gaia_id(node3_id);
-        gaia_ptr_t node4 = gaia_ptr_t::from_gaia_id(node4_id);
-        print_node(node1);
-        print_node(node2);
-        print_node(node3);
-        print_node(node4);
-        EXPECT_EQ(node1.id(), node1_id);
-        EXPECT_EQ(node2.id(), node2_id);
-        EXPECT_EQ(node3.id(), node3_id);
-        EXPECT_EQ(node4.id(), node4_id);
+        gaia_ptr_t item1 = gaia_ptr_t::from_gaia_id(item1_id);
+        gaia_ptr_t item2 = gaia_ptr_t::from_gaia_id(item2_id);
+        gaia_ptr_t item3 = gaia_ptr_t::from_gaia_id(item3_id);
+        gaia_ptr_t item4 = gaia_ptr_t::from_gaia_id(item4_id);
+        print_item(item1);
+        print_item(item2);
+        print_item(item3);
+        print_item(item4);
+        EXPECT_EQ(item1.id(), item1_id);
+        EXPECT_EQ(item2.id(), item2_id);
+        EXPECT_EQ(item3.id(), item3_id);
+        EXPECT_EQ(item4.id(), item4_id);
     }
     commit_transaction();
 }
@@ -172,11 +172,11 @@ TEST_F(db__core__db_client__test, update_payload)
     {
         std::cerr << std::endl;
         std::cerr << "*** Update payload and verify" << std::endl;
-        gaia_ptr_t node1 = gaia_ptr_t::from_gaia_id(node1_id);
-        print_node(node1);
-        node1.update_payload(strlen(payload), payload);
-        print_node(node1);
-        EXPECT_STREQ(node1.data(), payload);
+        gaia_ptr_t item1 = gaia_ptr_t::from_gaia_id(item1_id);
+        print_item(item1);
+        item1.update_payload(strlen(payload), payload);
+        print_item(item1);
+        EXPECT_STREQ(item1.data(), payload);
     }
     commit_transaction();
 
@@ -184,9 +184,9 @@ TEST_F(db__core__db_client__test, update_payload)
     {
         std::cerr << std::endl;
         std::cerr << "*** Reload data and verify update" << std::endl;
-        gaia_ptr_t node1 = gaia_ptr_t::from_gaia_id(node1_id);
-        print_node(node1);
-        EXPECT_STREQ(node1.data(), payload);
+        gaia_ptr_t item1 = gaia_ptr_t::from_gaia_id(item1_id);
+        print_item(item1);
+        EXPECT_STREQ(item1.data(), payload);
     }
     commit_transaction();
 }
@@ -198,11 +198,11 @@ TEST_F(db__core__db_client__test, update_payload_rollback)
     {
         std::cerr << std::endl;
         std::cerr << "*** Update payload and verify" << std::endl;
-        gaia_ptr_t node1 = gaia_ptr_t::from_gaia_id(node1_id);
-        print_node(node1);
-        node1.update_payload(strlen(payload), payload);
-        print_node(node1);
-        EXPECT_STREQ(node1.data(), payload);
+        gaia_ptr_t item1 = gaia_ptr_t::from_gaia_id(item1_id);
+        print_item(item1);
+        item1.update_payload(strlen(payload), payload);
+        print_item(item1);
+        EXPECT_STREQ(item1.data(), payload);
     }
     rollback_transaction();
 
@@ -210,9 +210,9 @@ TEST_F(db__core__db_client__test, update_payload_rollback)
     {
         std::cerr << std::endl;
         std::cerr << "*** Reload data and verify update" << std::endl;
-        gaia_ptr_t node1 = gaia_ptr_t::from_gaia_id(node1_id);
-        print_node(node1);
-        EXPECT_EQ(node1.data(), nullptr);
+        gaia_ptr_t item1 = gaia_ptr_t::from_gaia_id(item1_id);
+        print_item(item1);
+        EXPECT_EQ(item1.data(), nullptr);
     }
     commit_transaction();
 }
@@ -224,13 +224,13 @@ constexpr size_t c_buffer_size_inexact_multiple = c_stream_batch_size * 2 + 3;
 constexpr size_t c_buffer_size_minus_one = c_stream_batch_size - 1;
 constexpr size_t c_buffer_size_plus_one = c_stream_batch_size + 1;
 
-void iterate_test_create_nodes()
+void iterate_test_create_items()
 {
-    std::cerr << "*** Creating nodes for cursor test..." << std::endl;
+    std::cerr << "*** Creating items for cursor test..." << std::endl;
 
     // Create objects for iterator test.
     //
-    // "One node" test.
+    // "One item" test.
     gaia_type_t next_type = c_first_iterate_test_type;
     gaia_ptr_t::create(gaia_ptr_t::generate_id(), next_type, 0, nullptr);
 
@@ -280,81 +280,81 @@ void iterate_test_validate_iterations()
     gaia_type_t type = c_first_iterate_test_type - 1;
     count = 0;
     expected_count = 0;
-    for (auto node : gaia_ptr_t::find_all_range(type))
+    for (auto item : gaia_ptr_t::find_all_range(type))
     {
-        EXPECT_EQ(node.type(), type);
+        EXPECT_EQ(item.type(), type);
         count++;
     }
     EXPECT_EQ(count, expected_count);
 
     std::cerr << std::endl;
-    std::cerr << "*** Iterating over one node in type:" << std::endl;
+    std::cerr << "*** Iterating over one item in type:" << std::endl;
     type = c_first_iterate_test_type;
     count = 0;
     expected_count = 1;
-    for (auto node : gaia_ptr_t::find_all_range(type))
+    for (auto item : gaia_ptr_t::find_all_range(type))
     {
-        EXPECT_EQ(node.type(), type);
+        EXPECT_EQ(item.type(), type);
         count++;
     }
     EXPECT_EQ(count, expected_count);
 
     std::cerr << std::endl;
-    std::cerr << "*** Iterating over nodes with exact buffer size:" << std::endl;
+    std::cerr << "*** Iterating over items with exact buffer size:" << std::endl;
     ++type;
     count = 0;
     expected_count = c_buffer_size_exact;
-    for (auto node : gaia_ptr_t::find_all_range(type))
+    for (auto item : gaia_ptr_t::find_all_range(type))
     {
-        EXPECT_EQ(node.type(), type);
+        EXPECT_EQ(item.type(), type);
         count++;
     }
     EXPECT_EQ(count, expected_count);
 
     std::cerr << std::endl;
-    std::cerr << "*** Iterating over nodes with exact multiple of buffer size:" << std::endl;
+    std::cerr << "*** Iterating over items with exact multiple of buffer size:" << std::endl;
     ++type;
     count = 0;
     expected_count = c_buffer_size_exact_multiple;
-    for (auto node : gaia_ptr_t::find_all_range(type))
+    for (auto item : gaia_ptr_t::find_all_range(type))
     {
-        EXPECT_EQ(node.type(), type);
+        EXPECT_EQ(item.type(), type);
         count++;
     }
     EXPECT_EQ(count, expected_count);
 
     std::cerr << std::endl;
-    std::cerr << "*** Iterating over nodes with inexact multiple of buffer size:" << std::endl;
+    std::cerr << "*** Iterating over items with inexact multiple of buffer size:" << std::endl;
     ++type;
     count = 0;
     expected_count = c_buffer_size_inexact_multiple;
-    for (auto node : gaia_ptr_t::find_all_range(type))
+    for (auto item : gaia_ptr_t::find_all_range(type))
     {
-        EXPECT_EQ(node.type(), type);
+        EXPECT_EQ(item.type(), type);
         count++;
     }
     EXPECT_EQ(count, expected_count);
 
     std::cerr << std::endl;
-    std::cerr << "*** Iterating over nodes with one less than buffer size:" << std::endl;
+    std::cerr << "*** Iterating over items with one less than buffer size:" << std::endl;
     ++type;
     count = 0;
     expected_count = c_buffer_size_minus_one;
-    for (auto node : gaia_ptr_t::find_all_range(type))
+    for (auto item : gaia_ptr_t::find_all_range(type))
     {
-        EXPECT_EQ(node.type(), type);
+        EXPECT_EQ(item.type(), type);
         count++;
     }
     EXPECT_EQ(count, expected_count);
 
     std::cerr << std::endl;
-    std::cerr << "*** Iterating over nodes with one more than buffer size:" << std::endl;
+    std::cerr << "*** Iterating over items with one more than buffer size:" << std::endl;
     ++type;
     count = 0;
     expected_count = c_buffer_size_plus_one;
-    for (auto node : gaia_ptr_t::find_all_range(type))
+    for (auto item : gaia_ptr_t::find_all_range(type))
     {
-        EXPECT_EQ(node.type(), type);
+        EXPECT_EQ(item.type(), type);
         count++;
     }
     EXPECT_EQ(count, expected_count);
@@ -367,7 +367,7 @@ TEST_F(db__core__db_client__test, iterate_type_cursor_separate_txn)
     // Test that we can see additions across transactions.
     begin_transaction();
     {
-        iterate_test_create_nodes();
+        iterate_test_create_items();
     }
     commit_transaction();
 
@@ -383,7 +383,7 @@ TEST_F(db__core__db_client__test, iterate_type_cursor_same_txn)
     // Test that we can see additions in the transaction that made them.
     begin_transaction();
     {
-        iterate_test_create_nodes();
+        iterate_test_create_items();
         iterate_test_validate_iterations();
     }
     commit_transaction();
@@ -394,27 +394,27 @@ TEST_F(db__core__db_client__test, iterate_type_cursor_same_txn)
 //     begin_transaction();
 //     {
 //         std::cerr << std::endl;
-//         std::cerr << "*** Iterating over nodes of type 1 before delete:" << std::endl;
-//         auto node_iter = gaia_ptr_t::find_all_iterator(type1);
-//         print_node(*node_iter);
-//         EXPECT_EQ(node_iter->id(), node1_id);
+//         std::cerr << "*** Iterating over items of type 1 before delete:" << std::endl;
+//         auto item_iter = gaia_ptr_t::find_all_iterator(type1);
+//         print_item(*item_iter);
+//         EXPECT_EQ(item_iter->id(), item1_id);
 //         std::cerr << std::endl;
-//         std::cerr << "*** Preparing to delete first node of type 1:" << std::endl;
-//         node_iter->reset();
-//         std::cerr << "*** Iterating over nodes of type 1 after delete:" << std::endl;
-//         node_iter = gaia_ptr_t::find_all_iterator(type1);
-//         print_node(*node_iter);
-//         EXPECT_EQ(node_iter->id(), node2_id);
+//         std::cerr << "*** Preparing to delete first item of type 1:" << std::endl;
+//         item_iter->reset();
+//         std::cerr << "*** Iterating over items of type 1 after delete:" << std::endl;
+//         item_iter = gaia_ptr_t::find_all_iterator(type1);
+//         print_item(*item_iter);
+//         EXPECT_EQ(item_iter->id(), item2_id);
 //     }
 //     commit_transaction();
 
 //     begin_transaction();
 //     {
 //         std::cerr << std::endl;
-//         std::cerr << "*** Reloading data: iterating over nodes of type 1 after delete:" << std::endl;
-//         auto node_iter = gaia_ptr_t::find_all_iterator(type1);
-//         print_node(*node_iter);
-//         EXPECT_EQ(node_iter->id(), node2_id);
+//         std::cerr << "*** Reloading data: iterating over items of type 1 after delete:" << std::endl;
+//         auto item_iter = gaia_ptr_t::find_all_iterator(type1);
+//         print_item(*item_iter);
+//         EXPECT_EQ(item_iter->id(), item2_id);
 //     }
 //     commit_transaction();
 // }
@@ -426,11 +426,11 @@ TEST_F(db__core__db_client__test, null_payload_check)
         constexpr size_t c_test_payload_size = 50;
 
         std::cerr << std::endl;
-        std::cerr << "*** Creating a zero-length node:" << std::endl;
+        std::cerr << "*** Creating a zero-length item:" << std::endl;
         EXPECT_NE(gaia_ptr_t::create(gaia_ptr_t::generate_id(), type1, 0, nullptr), nullptr);
 
         std::cerr << std::endl;
-        std::cerr << "*** Creating a node with no payload and non-zero payload size (error):" << std::endl;
+        std::cerr << "*** Creating a item with no payload and non-zero payload size (error):" << std::endl;
         EXPECT_THROW(gaia_ptr_t::create(gaia_ptr_t::generate_id(), type1, c_test_payload_size, nullptr), assertion_failure);
     }
     commit_transaction();
@@ -444,11 +444,11 @@ TEST_F(db__core__db_client__test, create_large_object)
 
         size_t payload_size = sizeof(payload);
         std::cerr << std::endl;
-        std::cerr << "*** Creating the largest node (" << payload_size << " bytes):" << std::endl;
+        std::cerr << "*** Creating the largest item (" << payload_size << " bytes):" << std::endl;
         EXPECT_NE(gaia_ptr_t::create(gaia_ptr_t::generate_id(), type1, payload_size, payload), nullptr);
 
         std::cerr << std::endl;
-        std::cerr << "*** Creating a too-large node (" << payload_size + sizeof(gaia_id_t) << " bytes):" << std::endl;
+        std::cerr << "*** Creating a too-large item (" << payload_size + sizeof(gaia_id_t) << " bytes):" << std::endl;
         EXPECT_THROW(gaia_ptr_t::create(gaia_ptr_t::generate_id(), type1, payload_size + 1, payload), object_too_large);
     }
     commit_transaction();

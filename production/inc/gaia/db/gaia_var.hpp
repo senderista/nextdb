@@ -8,19 +8,21 @@
 
 #pragma once
 
-#include <typeinfo>
 #include <type_traits>
 
 #include "gaia/common.hpp"
 
 #include "gaia_internal/common/assert.hpp"
-#include "gaia_internal/common/hash.hpp"
+#include "gaia_internal/common/compile_time_hash.hpp"
 #include "gaia_internal/db/gaia_ptr.hpp"
 
 namespace gaia
 {
 namespace db
 {
+
+template<typename T>
+inline consteval common::gaia_type_t get_type_id();
 
 /**
  * This "smart pointer" class wraps an instance of a user-provided type T,
@@ -52,6 +54,7 @@ public:
 
 private:
     gaia_ptr_t m_ptr{c_invalid_gaia_locator};
+    static inline constinit common::gaia_type_t s_type{get_type_id<T>()};
 
 private:
     inline explicit gaia_var_t(gaia_ptr_t ptr)
@@ -59,7 +62,6 @@ private:
     {
     }
 };
-
 
 #include "gaia_var.inc"
 

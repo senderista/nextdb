@@ -7,21 +7,30 @@
 ////////////////////////////////////////////////////
 
 template<typename T>
+consteval common::gaia_type_t get_type_id()
+{
+    // REVIEW: __PRETTY_FUNCTION__ is a nonstandard GCC extension but is also
+    // supported on clang. We use it because it encodes the full type signature
+    // of the function, including the template type.
+    return common::gaia_type_t(
+        common::compile_time_hash::murmur3_32(__PRETTY_FUNCTION__));
+}
+
+template<typename T>
 gaia_var_t<T> gaia_var_t<T>::create(const T& value)
 {
+    // REVIEW: We put this static_assert here because it doesn't seem to work
+    // inside the class definition.
     static_assert(
         sizeof(::gaia::db::gaia_var_t<T>) == sizeof(gaia_ptr_t),
         "gaia_var_t shouldn't contain more than a gaia_ptr_t value!");
 
-    const char* type_name = typeid(T).name();
-    auto ptr = gaia_ptr_t::create(
-        gaia_ptr_t::generate_id(),
-        common::gaia_type_t(
-            common::hash::murmur3_32(
-                type_name, ::strlen(type_name))),
-        sizeof(T),
-        &value);
-    return gaia_var_t(ptr);
+    return gaia_var_t(
+        gaia_ptr_t::create(
+            gaia_ptr_t::generate_id(),
+            s_type,
+            sizeof(T),
+            &value));
 }
 
 template<typename T>

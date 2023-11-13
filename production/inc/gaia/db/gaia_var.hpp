@@ -37,6 +37,8 @@ template<typename T>
 class gaia_var_t
 {
     static_assert(std::is_trivial_v<T> == true, "gaia_var_t only accepts trivial types!");
+    static_assert(c_db_object_header_size % alignof(T) == 0,
+        "gaia_var_t type alignment must be compatible with object payload alignment!");
 
 public:
     gaia_var_t() = default;
